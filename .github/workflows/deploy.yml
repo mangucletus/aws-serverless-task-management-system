@@ -1,0 +1,398 @@
+name: Deploy Task Management System
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_DEFAULT_REGION: eu-west-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+          
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          terraform_wrapper: false
+          
+      # === TERRAFORM STATE MANAGEMENT ===
+      - name: Setup Terraform Backend (Remote State)
+        run: |
+          cd backend/terraform
+          echo "🔧 Configuring Terraform remote state..."
+          
+          # Check if backend configuration exists
+          if [ ! -f "backend.tf" ]; then
+            echo "⚠️  No remote backend configured. Creating backend configuration..."
+            cat > backend.tf << EOF
+          terraform {
+            backend "s3" {
+              bucket  = "terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+              key     = "task-management/terraform.tfstate"
+              region  = "eu-west-1"
+              encrypt = true
+            }
+          }
+          EOF
+          fi
+          
+      - name: Create Terraform State Bucket (if needed)
+        run: |
+          STATE_BUCKET="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+          
+          # Check if state bucket exists
+          if ! aws s3 ls "s3://${STATE_BUCKET}" 2>/dev/null; then
+            echo "📦 Creating Terraform state bucket: ${STATE_BUCKET}"
+            aws s3 mb "s3://${STATE_BUCKET}" --region eu-west-1
+            
+            # Enable versioning for state bucket
+            aws s3api put-bucket-versioning \
+              --bucket "${STATE_BUCKET}" \
+              --versioning-configuration Status=Enabled
+              
+            # Enable encryption
+            aws s3api put-bucket-encryption \
+              --bucket "${STATE_BUCKET}" \
+              --server-side-encryption-configuration \
+              '{
+                "Rules": [
+                  {
+                    "ApplyServerSideEncryptionByDefault": {
+                      "SSEAlgorithm": "AES256"
+                    }
+                  }
+                ]
+              }'
+            
+            echo "✅ Terraform state bucket created and configured"
+          else
+            echo "✅ Terraform state bucket already exists: ${STATE_BUCKET}"
+          fi
+          
+      # === SAFE TERRAFORM DEPLOYMENT ===
+      - name: Terraform Init
+        run: |
+          cd backend/terraform
+          echo "🔄 Initializing Terraform..."
+          terraform init -input=false
+          
+      - name: Terraform Validate
+        run: |
+          cd backend/terraform
+          echo "🔍 Validating Terraform configuration..."
+          terraform validate
+          
+      - name: Terraform Plan with Change Detection
+        id: plan
+        run: |
+          cd backend/terraform
+          echo "📋 Planning Terraform changes..."
+          
+          # Run terraform plan and capture exit code
+          set +e
+          terraform plan -detailed-exitcode -out=tfplan
+          PLAN_EXIT_CODE=$?
+          set -e
+          
+          echo "Plan exit code: $PLAN_EXIT_CODE"
+          
+          # Handle different exit codes
+          case $PLAN_EXIT_CODE in
+            0)
+              echo "✅ No changes detected - infrastructure is up to date"
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "plan_status=no_changes" >> $GITHUB_OUTPUT
+              ;;
+            1)
+              echo "❌ Terraform plan failed"
+              exit 1
+              ;;
+            2)
+              echo "📝 Changes detected - will apply updates"
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+              echo "plan_status=has_changes" >> $GITHUB_OUTPUT
+              
+              # Show plan summary for transparency
+              echo "📊 Terraform Plan Summary:"
+              terraform show -no-color tfplan | grep -E "Plan:|# |~|+|-" | head -20
+              ;;
+            *)
+              echo "❌ Unexpected terraform plan exit code: $PLAN_EXIT_CODE"
+              exit 1
+              ;;
+          esac
+          
+      - name: Terraform Apply (Only if Changes Detected)
+        if: steps.plan.outputs.has_changes == 'true'
+        run: |
+          cd backend/terraform
+          echo "🚀 Applying Terraform changes..."
+          echo "⚠️  This will modify your AWS infrastructure"
+          
+          # Apply the planned changes
+          terraform apply -auto-approve tfplan
+          
+          echo "✅ Infrastructure changes applied successfully"
+          
+      - name: Skip Infrastructure (No Changes)
+        if: steps.plan.outputs.has_changes == 'false'
+        run: |
+          echo "⏭️  Skipping infrastructure deployment - no changes detected"
+          echo "📊 Current infrastructure state is already up-to-date"
+          
+      # === EXTRACT INFRASTRUCTURE OUTPUTS ===
+      - name: Get Infrastructure Credentials
+        id: infrastructure
+        run: |
+          cd backend/terraform
+          echo "📤 Extracting infrastructure outputs..."
+          
+          # Extract all necessary outputs
+          USER_POOL_ID=$(terraform output -raw cognito_user_pool_id 2>/dev/null || echo "")
+          CLIENT_ID=$(terraform output -raw cognito_client_id 2>/dev/null || echo "")
+          APPSYNC_ENDPOINT=$(terraform output -raw appsync_endpoint 2>/dev/null || echo "")
+          S3_BUCKET=$(terraform output -raw s3_bucket_name 2>/dev/null || echo "")
+          COGNITO_DOMAIN=$(terraform output -raw cognito_domain 2>/dev/null || echo "")
+          
+          # Validate critical outputs exist
+          if [ -z "$USER_POOL_ID" ] || [ -z "$CLIENT_ID" ] || [ -z "$APPSYNC_ENDPOINT" ] || [ -z "$S3_BUCKET" ]; then
+            echo "❌ Error: Missing required Terraform outputs"
+            echo "This might indicate infrastructure deployment failed or outputs are not configured"
+            echo "USER_POOL_ID: '$USER_POOL_ID'"
+            echo "CLIENT_ID: '$CLIENT_ID'"
+            echo "APPSYNC_ENDPOINT: '$APPSYNC_ENDPOINT'"
+            echo "S3_BUCKET: '$S3_BUCKET'"
+            echo ""
+            echo "🔍 Available outputs:"
+            terraform output
+            exit 1
+          fi
+          
+          # Set outputs for next steps
+          echo "user_pool_id=$USER_POOL_ID" >> $GITHUB_OUTPUT
+          echo "client_id=$CLIENT_ID" >> $GITHUB_OUTPUT
+          echo "appsync_endpoint=$APPSYNC_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "s3_bucket=$S3_BUCKET" >> $GITHUB_OUTPUT
+          echo "cognito_domain=$COGNITO_DOMAIN" >> $GITHUB_OUTPUT
+          
+          # Success message
+          echo "✅ Infrastructure credentials extracted successfully:"
+          echo "🆔 User Pool ID: ${USER_POOL_ID:0:20}..."
+          echo "🔑 Client ID: ${CLIENT_ID:0:20}..."
+          echo "🌐 AppSync Endpoint: $APPSYNC_ENDPOINT"
+          echo "🪣 S3 Bucket: $S3_BUCKET"
+          echo "🏷️ Cognito Domain: $COGNITO_DOMAIN"
+          
+      # === FRONTEND BUILD WITH DYNAMIC CREDENTIALS ===
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+          
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          echo "📦 Installing frontend dependencies..."
+          npm ci --prefer-offline --no-audit
+          
+      - name: Create dynamic environment file
+        run: |
+          cd frontend
+          echo "🔧 Creating .env file with infrastructure credentials..."
+          
+          # Create environment file with extracted credentials
+          cat > .env << EOF
+          # Generated automatically by GitHub Actions CI/CD Pipeline
+          # Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          # Commit: ${{ github.sha }}
+          # DO NOT EDIT MANUALLY - This file is regenerated on each deployment
+          
+          VITE_COGNITO_USER_POOL_ID=${{ steps.infrastructure.outputs.user_pool_id }}
+          VITE_COGNITO_CLIENT_ID=${{ steps.infrastructure.outputs.client_id }}
+          VITE_APPSYNC_ENDPOINT=${{ steps.infrastructure.outputs.appsync_endpoint }}
+          VITE_REGION=eu-west-1
+          VITE_COGNITO_DOMAIN=${{ steps.infrastructure.outputs.cognito_domain }}
+          EOF
+          
+          echo "✅ Environment file created successfully"
+          echo "📋 Environment variables configured:"
+          echo "- VITE_COGNITO_USER_POOL_ID: ✓"
+          echo "- VITE_COGNITO_CLIENT_ID: ✓"
+          echo "- VITE_APPSYNC_ENDPOINT: ✓"
+          echo "- VITE_REGION: ✓"
+          echo "- VITE_COGNITO_DOMAIN: ✓"
+          
+      - name: Build frontend
+        run: |
+          cd frontend
+          echo "🏗️ Building frontend application..."
+          
+          # Build with error handling
+          if npm run build; then
+            echo "✅ Frontend build completed successfully"
+          else
+            echo "❌ Frontend build failed"
+            echo "🔍 Checking for common issues..."
+            
+            # Check if .env exists and has content
+            if [ -f ".env" ]; then
+              echo "📋 Environment file exists with $(wc -l < .env) lines"
+            else
+              echo "❌ Environment file missing"
+            fi
+            
+            # Check node_modules
+            if [ -d "node_modules" ]; then
+              echo "📦 Dependencies installed"
+            else
+              echo "❌ Dependencies missing"
+            fi
+            
+            exit 1
+          fi
+          
+      - name: Verify build output
+        run: |
+          echo "🔍 Verifying build output..."
+          
+          if [ ! -d "frontend/dist" ]; then
+            echo "❌ Error: dist directory not found"
+            exit 1
+          fi
+          
+          if [ -z "$(ls -A frontend/dist)" ]; then
+            echo "❌ Error: dist directory is empty"
+            exit 1
+          fi
+          
+          # Check for critical files
+          REQUIRED_FILES=("index.html")
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "frontend/dist/$file" ]; then
+              echo "❌ Error: Required file missing: $file"
+              exit 1
+            fi
+          done
+          
+          echo "✅ Build verification successful!"
+          echo "📊 Build output:"
+          ls -la frontend/dist/ | head -10
+          echo "📦 Total files: $(find frontend/dist -type f | wc -l)"
+          echo "📏 Total size: $(du -sh frontend/dist | cut -f1)"
+          
+      # === DEPLOY TO S3 ===
+      - name: Deploy to S3
+        run: |
+          S3_BUCKET="${{ steps.infrastructure.outputs.s3_bucket }}"
+          echo "🚀 Deploying to S3 bucket: $S3_BUCKET"
+          
+          # Verify S3 bucket exists and is accessible
+          if ! aws s3 ls "s3://$S3_BUCKET" >/dev/null 2>&1; then
+            echo "❌ Error: Cannot access S3 bucket: $S3_BUCKET"
+            echo "🔍 Checking if bucket exists..."
+            aws s3 ls | grep "$S3_BUCKET" || echo "Bucket not found in account"
+            exit 1
+          fi
+          
+          echo "✅ S3 bucket accessible"
+          
+          # Deploy static assets with long cache (CSS, JS, images)
+          echo "📤 Deploying static assets with long cache..."
+          aws s3 sync frontend/dist/ "s3://$S3_BUCKET" \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "*.html" \
+            --exclude "*.json" \
+            --exclude "manifest.json" \
+            --exclude "service-worker.js"
+          
+          # Deploy HTML and JSON files with short cache
+          echo "📤 Deploying HTML and JSON files with short cache..."
+          aws s3 sync frontend/dist/ "s3://$S3_BUCKET" \
+            --cache-control "public, max-age=0, must-revalidate" \
+            --include "*.html" \
+            --include "*.json"
+            
+          # Deploy service worker with no cache (if exists)
+          if [ -f "frontend/dist/service-worker.js" ]; then
+            echo "📤 Deploying service worker with no cache..."
+            aws s3 sync frontend/dist/ "s3://$S3_BUCKET" \
+              --cache-control "no-cache, no-store, must-revalidate" \
+              --include "service-worker.js"
+          fi
+          
+          echo "✅ S3 deployment completed successfully"
+          
+      # === DEPLOYMENT SUCCESS SUMMARY ===
+      - name: Deployment Summary
+        run: |
+          echo ""
+          echo "🎉 DEPLOYMENT COMPLETED SUCCESSFULLY! 🎉"
+          echo "=============================================="
+          echo ""
+          echo "📋 Infrastructure Summary:"
+          echo "├─ 🆔 Cognito User Pool: ${{ steps.infrastructure.outputs.user_pool_id }}"
+          echo "├─ 🔑 Client ID: ${{ steps.infrastructure.outputs.client_id }}"
+          echo "├─ 🌐 GraphQL API: ${{ steps.infrastructure.outputs.appsync_endpoint }}"
+          echo "├─ 🪣 S3 Bucket: ${{ steps.infrastructure.outputs.s3_bucket }}"
+          echo "└─ 🏷️ Cognito Domain: ${{ steps.infrastructure.outputs.cognito_domain }}"
+          echo ""
+          echo "🌍 APPLICATION URLS:"
+          echo "├─ 🖥️  Website: http://${{ steps.infrastructure.outputs.s3_bucket }}.s3-website-eu-west-1.amazonaws.com"
+          echo "└─ 🔗 GraphQL API: ${{ steps.infrastructure.outputs.appsync_endpoint }}"
+          echo ""
+          echo "⚙️  DEPLOYMENT INFO:"
+          echo "├─ 📦 Infrastructure Changes: ${{ steps.plan.outputs.plan_status }}"
+          echo "├─ 🔄 Frontend Rebuilt: ✅"
+          echo "├─ 🚀 S3 Deployment: ✅"
+          echo "└─ ⏱️  Completed: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          echo ""
+          echo "🔐 Security Note: Frontend automatically configured with backend credentials"
+          echo "📊 Monitor your application: AWS CloudWatch Console"
+          echo ""
+          
+      # === CLEANUP ===
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "🧹 Cleaning up temporary files..."
+          
+          # Remove terraform plan file
+          rm -f backend/terraform/tfplan
+          
+          # Remove frontend environment file (contains sensitive data)
+          rm -f frontend/.env
+          
+          echo "✅ Cleanup completed"
+          
+      # === FAILURE NOTIFICATION ===
+      - name: Deployment Failed Notification
+        if: failure()
+        run: |
+          echo ""
+          echo "❌ DEPLOYMENT FAILED!"
+          echo "===================="
+          echo ""
+          echo "🔍 Troubleshooting Steps:"
+          echo "1. Check the logs above for specific error messages"
+          echo "2. Verify AWS credentials have sufficient permissions"
+          echo "3. Ensure all required secrets are configured in GitHub"
+          echo "4. Check if AWS resources are in the expected state"
+          echo ""
+          echo "📚 For help, check the documentation or create an issue"
+          echo ""

@@ -1,0 +1,51 @@
+type User {
+  userId: ID!
+  email: String!
+  role: String!
+}
+
+type Team {
+  teamId: ID!
+  name: String!
+  adminId: ID!
+}
+
+type Membership {
+  teamId: ID!
+  userId: ID!
+  role: String!
+}
+
+type Task {
+  teamId: ID!
+  taskId: ID!
+  title: String!
+  description: String!
+  assignedTo: ID
+  status: String!
+  deadline: String!
+}
+
+type Query {
+  listTeams: [Team]
+  listTasks(teamId: ID!): [Task]
+  getUser(userId: ID!): User
+}
+
+type Mutation {
+  createTeam(name: String!): Team
+  addMember(teamId: ID!, email: String!): Membership
+  createTask(
+    teamId: ID!
+    title: String!
+    description: String!
+    assignedTo: ID
+    deadline: String!
+  ): Task
+  updateTask(teamId: ID!, taskId: ID!, status: String!): Task
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+}
