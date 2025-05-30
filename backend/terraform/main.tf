@@ -299,7 +299,6 @@ resource "aws_lambda_function" "task_handler" {
       DYNAMODB_MEMBERSHIPS_TABLE = aws_dynamodb_table.memberships.name
       DYNAMODB_TASKS_TABLE       = aws_dynamodb_table.tasks.name
       SNS_TOPIC_ARN             = aws_sns_topic.task_notifications.arn
-      AWS_REGION                 = var.region
     }
   }
   
