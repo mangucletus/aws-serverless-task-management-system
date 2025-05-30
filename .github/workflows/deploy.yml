@@ -37,10 +37,14 @@ jobs:
           # Check if backend configuration exists
           if [ ! -f "backend.tf" ]; then
             echo "⚠️  No remote backend configured. Creating backend configuration..."
+            # Create a shorter, compliant bucket name
+            REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+            BACKEND_BUCKET="tf-state-${{ github.repository_owner }}-${REPO_NAME:0:20}"
+            
             cat > backend.tf << EOF
           terraform {
             backend "s3" {
-              bucket  = "terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+              bucket  = "${BACKEND_BUCKET}"
               key     = "task-management/terraform.tfstate"
               region  = "eu-west-1"
               encrypt = true
@@ -51,7 +55,9 @@ jobs:
           
       - name: Create Terraform State Bucket (if needed)
         run: |
-          STATE_BUCKET="terraform-state-${{ github.repository_owner }}-${{ github.event.repository.name }}"
+          # Create a shorter, compliant bucket name
+          REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+          STATE_BUCKET="tf-state-${{ github.repository_owner }}-${REPO_NAME:0:20}"
           
           # Check if state bucket exists
           if ! aws s3 ls "s3://${STATE_BUCKET}" 2>/dev/null; then
