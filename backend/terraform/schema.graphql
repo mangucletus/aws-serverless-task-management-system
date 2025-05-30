@@ -29,6 +29,7 @@ type Task {
 type Query {
   listTeams: [Team]
   listTasks(teamId: ID!): [Task]
+  listMembers(teamId: ID!): [Membership]
   getUser(userId: ID!): User
 }
 
