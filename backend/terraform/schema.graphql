@@ -1,52 +1,82 @@
+# Defines the User type for representing user data in the GraphQL schema
 type User {
-  userId: ID!
-  email: String!
-  role: String!
+  userId: ID! # Unique identifier for the user, required (non-nullable)
+  email: String! # User's email address, required (non-nullable)
+  name: String # User's name, optional
+  createdAt: String # Timestamp when the user was created, optional
+  lastLogin: String # Timestamp of the user's last login, optional
 }
 
+# Defines the Team type for representing team data in the GraphQL schema
 type Team {
-  teamId: ID!
-  name: String!
-  adminId: ID!
+  teamId: ID! # Unique identifier for the team, required (non-nullable)
+  name: String! # Name of the team, required (non-nullable)
+  adminId: ID! # ID of the user who is the admin of the team, required (non-nullable)
+  createdAt: String # Timestamp when the team was created, optional
+  userRole: String # Role of the authenticated user in the team (e.g., Admin or Member), optional
 }
 
+# Defines the Membership type for representing team membership data in the GraphQL schema
 type Membership {
-  teamId: ID!
-  userId: ID!
-  role: String!
+  teamId: ID! # ID of the team the membership belongs to, required (non-nullable)
+  userId: ID! # ID of the user who is a member, required (non-nullable)
+  role: String! # Role of the user in the team (e.g., Admin or Member), required (non-nullable)
+  joinedAt: String # Timestamp when the user joined the team, optional
+  addedBy: String # ID or identifier of the user who added this member, optional
 }
 
+# Defines the Task type for representing task data in the GraphQL schema
 type Task {
-  teamId: ID!
-  taskId: ID!
-  title: String!
-  description: String!
-  assignedTo: ID
-  status: String!
-  deadline: String!
+  teamId: ID! # ID of the team the task belongs to, required (non-nullable)
+  taskId: ID! # Unique identifier for the task, required (non-nullable)
+  title: String! # Title of the task, required (non-nullable)
+  description: String! # Description of the task, required (non-nullable)
+  assignedTo: ID # ID of the user the task is assigned to, optional
+  status: String! # Status of the task (e.g., To Do, In Progress, Done), required (non-nullable)
+  priority: String # Priority level of the task (e.g., Low, Medium, High), optional
+  deadline: String # Deadline for the task, optional
+  createdBy: String # ID or identifier of the user who created the task, optional
+  createdAt: String # Timestamp when the task was created, optional
+  updatedAt: String # Timestamp when the task was last updated, optional
+  updatedBy: String # ID or identifier of the user who last updated the task, optional
 }
 
+# Defines the Query type for read operations in the GraphQL schema
 type Query {
-  listTeams: [Team]
-  listTasks(teamId: ID!): [Task]
-  listMembers(teamId: ID!): [Membership]
-  getUser(userId: ID!): User
+  listTeams: [Team] # Retrieves a list of teams, returns an array of Team objects, optional
+  listTasks(teamId: ID!): [Task] # Retrieves tasks for a specific team, requires teamId, returns an array of Task objects, optional
+  searchTasks(teamId: ID!, searchTerm: String!): [Task] # Searches tasks in a team by a search term, requires teamId and searchTerm, returns an array of Task objects, optional
+  listMembers(teamId: ID!): [Membership] # Retrieves memberships for a specific team, requires teamId, returns an array of Membership objects, optional
+  getUser(userId: ID!): User # Retrieves a specific user by their ID, requires userId, returns a User object, optional
 }
 
+# Defines the Mutation type for write operations in the GraphQL schema
 type Mutation {
-  createTeam(name: String!): Team
-  addMember(teamId: ID!, email: String!): Membership
+  createTeam(name: String!): Team # Creates a new team with a given name, requires name, returns a Team object, optional
+  addMember(teamId: ID!, email: String!): Membership # Adds a user to a team by their email, requires teamId and email, returns a Membership object, optional
   createTask(
-    teamId: ID!
-    title: String!
-    description: String!
-    assignedTo: ID
-    deadline: String!
-  ): Task
-  updateTask(teamId: ID!, taskId: ID!, status: String!): Task
+    teamId: ID! # ID of the team for the task, required
+    title: String! # Title of the task, required
+    description: String! # Description of the task, required
+    assignedTo: ID # ID of the user to assign the task to, optional
+    deadline: String # Deadline for the task, optional
+    priority: String # Priority level of the task, optional
+  ): Task # Creates a new task, returns a Task object, optional
+  updateTask(teamId: ID!, taskId: ID!, status: String!): Task # Updates the status of a specific task, requires teamId, taskId, and status, returns a Task object, optional
+  updateTaskDetails(
+    teamId: ID! # ID of the team for the task, required
+    taskId: ID! # ID of the task to update, required
+    title: String # Updated title of the task, optional
+    description: String # Updated description of the task, optional
+    assignedTo: ID # Updated assignee for the task, optional
+    deadline: String # Updated deadline for the task, optional
+    priority: String # Updated priority for the task, optional
+  ): Task # Updates specific details of a task, returns a Task object, optional
+  deleteTask(teamId: ID!, taskId: ID!): Boolean # Deletes a specific task, requires teamId and taskId, returns a Boolean indicating success, optional
 }
 
+# Defines the GraphQL schema entry points
 schema {
-  query: Query
-  mutation: Mutation
+  query: Query # Specifies the Query type as the entry point for read operations
+  mutation: Mutation # Specifies the Mutation type as the entry point for write operations
 }

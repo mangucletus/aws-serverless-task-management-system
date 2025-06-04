@@ -51,19 +51,35 @@ function AuthenticatedApp({ user, signOut }) {
     try {
       setIsLoading(true);
       const userData = await getCurrentUser();
-      setCurrentUser({
+      
+      // Create a comprehensive user object with all necessary fields
+      const enhancedUser = {
         ...userData,
-        email: userData.signInDetails?.loginId || user?.signInDetails?.loginId || 'Unknown'
-      });
+        userId: userData.username,
+        email: userData.signInDetails?.loginId || userData.username || 'unknown@example.com',
+        username: userData.username,
+        displayName: userData.signInDetails?.loginId?.split('@')[0] || userData.username
+      };
+      
+      console.log('Loaded user data:', enhancedUser);
+      setCurrentUser(enhancedUser);
     } catch (error) {
       console.error('Error loading user:', error);
+      // Create a fallback user object
+      const fallbackUser = {
+        userId: user?.username || 'unknown',
+        email: user?.signInDetails?.loginId || user?.username || 'unknown@example.com',
+        username: user?.username || 'unknown',
+        displayName: user?.username?.split('@')[0] || 'User'
+      };
+      setCurrentUser(fallbackUser);
     } finally {
       setIsLoading(false);
     }
   }
 
   if (isLoading) {
-    return <LoadingSpinner />;
+    return <LoadingSpinner message="Initializing application..." />;
   }
 
   return (
