@@ -699,12 +699,6 @@ resource "aws_s3_bucket_policy" "frontend_policy" {
   depends_on = [aws_s3_bucket_public_access_block.frontend]
 }
 
-# Variables
-variable "region" {
-  description = "AWS region"
-  type        = string
-  default     = "eu-west-1"
-}
 
 # Outputs
 output "cognito_user_pool_id" {
