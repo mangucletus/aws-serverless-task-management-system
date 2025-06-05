@@ -84,8 +84,8 @@ function validateEmail(email) {
 
 function validateLength(value, fieldName, minLength, maxLength) {
   if (value && typeof value === 'string') {
-    const trimmed = value.trim();
-    if (trimmed.length < minLength || trimmed.length > maxLength) {
+    const trimmedValue = value.trim();
+    if (trimmedValue.length < minLength || trimmedValue.length > maxLength) {
       throw new ValidationError(`${fieldName} must be between ${minLength} and ${maxLength} characters`);
     }
   }
@@ -111,6 +111,28 @@ function normalizeUserId(identity) {
   throw new AuthorizationError('Unable to determine user identity');
 }
 
+// Send SNS notification
+async function sendNotification(subject, message, recipientId, metadata = {}) {
+  try {
+    const params = {
+      TopicArn: process.env.SNS_TOPIC_ARN,
+      Subject: subject,
+      Message: JSON.stringify({
+        recipientId: recipientId,
+        message: message,
+        metadata: metadata,
+        timestamp: new Date().toISOString()
+      })
+    };
+    
+    await snsClient.send(new PublishCommand(params));
+    logSuccess('SEND_NOTIFICATION', 'Notification sent successfully', { subject, recipientId });
+  } catch (error) {
+    logError('SEND_NOTIFICATION', error, { subject, recipientId });
+    console.warn('Failed to send notification, continuing execution');
+  }
+}
+
 // Main handler for GraphQL resolvers
 exports.handler = async (event) => {
   console.log('Lambda invocation started:', {
@@ -118,10 +140,13 @@ exports.handler = async (event) => {
     event: JSON.stringify(event, null, 2)
   });
   
-  const { fieldName, arguments: args, identity } = event;
+  // Parse payload from event
+  const { fieldName, arguments: argsStr, identity: identityStr } = event.payload || {};
+  const args = argsStr ? JSON.parse(argsStr) : {};
+  const identity = identityStr ? JSON.parse(identityStr) : null;
   
   if (!fieldName) {
-    throw new ValidationError('Missing fieldName in event');
+    throw ValidationError('Missing fieldName in event.payload');
   }
   
   if (!identity) {
@@ -424,6 +449,10 @@ async function createTask(args, userId, userGroups) {
       Key: { teamId: args.teamId }
     }));
     
+    if (!teamInfo.Item) {
+      throw new NotFoundError('Team not found');
+    }
+    
     const taskId = uuidv4();
     const timestamp = new Date().toISOString();
     
@@ -450,13 +479,13 @@ async function createTask(args, userId, userGroups) {
     if (args.assignedTo) {
       await sendNotification(
         'New Task Assignment',
-        `You have been assigned a new task: "${args.title}" in team "${teamInfo.Item?.name || 'Unknown'}". Priority: ${task.priority}`,
+        `You have been assigned a new task: "${args.title}" in team "${teamInfo.Item.name}". Priority: ${task.priority}`,
         args.assignedTo,
         {
           taskId,
           taskTitle: args.title,
           teamId: args.teamId,
-          teamName: teamInfo.Item?.name,
+          teamName: teamInfo.Item.name,
           priority: task.priority,
           deadline: task.deadline,
           action: 'task_assigned'
@@ -474,7 +503,7 @@ async function createTask(args, userId, userGroups) {
     return task;
     
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof AuthorizationError) {
+    if (error instanceof ValidationError || error instanceof AuthorizationError || error instanceof NotFoundError) {
       throw error;
     }
     logError('CREATE_TASK', error, { teamId: args.teamId, title: args.title });
@@ -522,19 +551,27 @@ async function updateTask(args, userId, userGroups) {
       throw new AuthorizationError('You can only update tasks assigned to you or if you are a team admin');
     }
     
-    if (task.status === args.status) {
-      console.log('[UPDATE_TASK] Status unchanged, returning current task');
-      return task;
+    const teamInfo = await dynamodb.send(new GetCommand({
+      TableName: process.env.DYNAMODB_TEAMS_TABLE,
+      Key: { teamId: args.teamId }
+    }));
+    
+    if (!teamInfo.Item) {
+      throw new NotFoundError('Team not found');
     }
+    
+    const timestamp = new Date().toISOString();
     
     const updateParams = {
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       Key: { teamId: args.teamId, taskId: args.taskId },
       UpdateExpression: 'SET #status = :status, updatedAt = :updatedAt, updatedBy = :updatedBy',
-      ExpressionAttributeNames: { '#status': 'status' },
-      ExpressionAttributeValues: { 
+      ExpressionAttributeNames: {
+        '#status': 'status'
+      },
+      ExpressionAttributeValues: {
         ':status': args.status,
-        ':updatedAt': new Date().toISOString(),
+        ':updatedAt': timestamp,
         ':updatedBy': userId
       },
       ReturnValues: 'ALL_NEW'
@@ -542,41 +579,26 @@ async function updateTask(args, userId, userGroups) {
     
     const result = await dynamodb.send(new UpdateCommand(updateParams));
     
-    const teamInfo = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_TEAMS_TABLE,
-      Key: { teamId: args.teamId }
-    }));
-    
-    const notificationTargets = new Set([task.createdBy]);
-    if (task.assignedTo && task.assignedTo !== userId) {
-      notificationTargets.add(task.assignedTo);
+    if (task.assignedTo && oldStatus !== args.status) {
+      await sendNotification(
+        'Task Status Updated',
+        `The task "${task.title}" in team "${teamInfo.Item.name}" has been updated to "${args.status}" by ${userId}.`,
+        task.assignedTo,
+        {
+          taskId: args.taskId,
+          taskTitle: task.title,
+          teamId: args.teamId,
+          teamName: teamInfo.Item.name,
+          oldStatus,
+          newStatus: args.status,
+          action: 'task_status_updated'
+        }
+      );
     }
     
-    for (const target of notificationTargets) {
-      if (target !== userId) {
-        await sendNotification(
-          'Task Status Updated',
-          `Task "${task.title}" status changed from "${oldStatus}" to "${args.status}" by ${userId}`,
-          target,
-          {
-            taskId: args.taskId,
-            taskTitle: task.title,
-            oldStatus,
-            newStatus: args.status,
-            updatedBy: userId,
-            teamId: args.teamId,
-            teamName: teamInfo.Item?.name,
-            action: 'task_status_updated'
-          }
-        );
-      }
-    }
-    
-    logSuccess('UPDATE_TASK', 'Task updated successfully', { 
+    logSuccess('UPDATE_TASK', 'Task status updated successfully', { 
       taskId: args.taskId, 
-      oldStatus,
-      newStatus: args.status,
-      updatedBy: userId
+      status: args.status 
     });
     
     return result.Attributes;
@@ -590,12 +612,27 @@ async function updateTask(args, userId, userGroups) {
   }
 }
 
-// Update task details (title, description, assignment, etc.)
+// Update task details (title, description, priority, deadline, assignedTo)
 async function updateTaskDetails(args, userId, userGroups) {
   console.log('[UPDATE_TASK_DETAILS] Starting task details update:', { args, userId });
   
   validateRequired(args?.teamId, 'Team ID');
   validateRequired(args?.taskId, 'Task ID');
+  
+  if (args.title) validateLength(args.title, 'Task title', 1, 200);
+  if (args.description) validateLength(args.description, 'Task description', 1, 1000);
+  if (args.priority && !VALID_PRIORITIES.includes(args.priority)) {
+    throw new ValidationError(`Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}`);
+  }
+  if (args.deadline) {
+    const deadlineDate = new Date(args.deadline);
+    if (isNaN(deadlineDate.getTime())) {
+      throw new ValidationError('Invalid deadline format. Use ISO date format (YYYY-MM-DD)');
+    }
+    if (deadlineDate < new Date()) {
+      throw new ValidationError('Deadline cannot be in the past');
+    }
+  }
   
   try {
     const taskResult = await dynamodb.send(new GetCommand({
@@ -607,88 +644,98 @@ async function updateTaskDetails(args, userId, userGroups) {
       throw new NotFoundError('Task not found');
     }
     
+    const task = taskResult.Item;
+    
     const membership = await dynamodb.send(new GetCommand({
       TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
       Key: { teamId: args.teamId, userId }
     }));
     
-    if (!membership.Item || membership.Item.role !== 'admin') {
+    if (!membership.Item) {
+      throw new AuthorizationError('You must be a team member to update task details');
+    }
+    
+    if (membership.Item.role !== 'admin') {
       throw new AuthorizationError('Only team admins can update task details');
     }
     
-    const updateExpressions = [];
-    const expressionAttributeNames = {};
-    const expressionAttributeValues = {};
+    if (args.assignedTo) {
+      const assigneeCheck = await dynamodb.send(new GetCommand({
+        TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
+        Key: { teamId: args.teamId, userId: args.assignedTo }
+      }));
+      
+      if (!assigneeCheck.Item && args.assignedTo !== null) {
+        throw new ValidationError('Cannot assign task to user who is not a team member');
+      }
+    }
     
-    if (args.title !== undefined) {
-      validateLength(args.title, 'Task title', 1, 200);
-      updateExpressions.push('#title = :title');
-      expressionAttributeNames['#title'] = 'title';
+    const teamInfo = await dynamodb.send(new GetCommand({
+      TableName: process.env.DYNAMODB_TEAMS_TABLE,
+      Key: { teamId: args.teamId }
+    }));
+    
+    if (!teamInfo.Item) {
+      throw new NotFoundError('Team not found');
+    }
+    
+    const timestamp = new Date().toISOString();
+    let updateExpression = 'SET updatedAt = :updatedAt, updatedBy = :updatedBy';
+    const expressionAttributeNames = {};
+    const expressionAttributeValues = {
+      ':updatedAt': timestamp,
+      ':updatedBy': userId
+    };
+    
+    if (args.title) {
+      updateExpression += ', title = :title';
       expressionAttributeValues[':title'] = args.title.trim();
     }
-    
-    if (args.description !== undefined) {
-      validateLength(args.description, 'Task description', 1, 1000);
-      updateExpressions.push('description = :description');
+    if (args.description) {
+      updateExpression += ', description = :description';
       expressionAttributeValues[':description'] = args.description.trim();
     }
-    
-    if (args.assignedTo !== undefined) {
-      if (args.assignedTo) {
-        const assigneeCheck = await dynamodb.send(new GetCommand({
-          TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-          Key: { teamId: args.teamId, userId: args.assignedTo }
-        }));
-        
-        if (!assigneeCheck.Item) {
-          throw new ValidationError('Cannot assign task to user who is not a team member');
-        }
-      }
-      updateExpressions.push('assignedTo = :assignedTo');
-      expressionAttributeValues[':assignedTo'] = args.assignedTo;
-    }
-    
-    if (args.deadline !== undefined) {
-      if (args.deadline) {
-        const deadlineDate = new Date(args.deadline);
-        if (isNaN(deadlineDate.getTime())) {
-          throw new ValidationError('Invalid deadline format');
-        }
-      }
-      updateExpressions.push('deadline = :deadline');
-      expressionAttributeValues[':deadline'] = args.deadline;
-    }
-    
-    if (args.priority !== undefined) {
-      if (args.priority && !VALID_PRIORITIES.includes(args.priority)) {
-        throw new ValidationError(`Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}`);
-      }
-      updateExpressions.push('priority = :priority');
+    if (args.priority) {
+      updateExpression += ', priority = :priority';
       expressionAttributeValues[':priority'] = args.priority;
     }
-    
-    if (updateExpressions.length === 0) {
-      return taskResult.Item;
+    if (args.deadline !== undefined) {
+      updateExpression += ', deadline = :deadline';
+      expressionAttributeValues[':deadline'] = args.deadline || null;
     }
-    
-    updateExpressions.push('updatedAt = :updatedAt', 'updatedBy = :updatedBy');
-    expressionAttributeValues[':updatedAt'] = new Date().toISOString();
-    expressionAttributeValues[':updatedBy'] = userId;
+    if (args.assignedTo !== undefined) {
+      updateExpression += ', assignedTo = :assignedTo';
+      expressionAttributeValues[':assignedTo'] = args.assignedTo || null;
+    }
     
     const updateParams = {
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       Key: { teamId: args.teamId, taskId: args.taskId },
-      UpdateExpression: 'SET ' + updateExpressions.join(', '),
-      ExpressionAttributeNames: Object.keys(expressionAttributeNames).length > 0 ? expressionAttributeNames : undefined,
+      UpdateExpression: updateExpression,
+      ExpressionAttributeNames: expressionAttributeNames,
       ExpressionAttributeValues: expressionAttributeValues,
       ReturnValues: 'ALL_NEW'
     };
     
     const result = await dynamodb.send(new UpdateCommand(updateParams));
     
+    if (args.assignedTo && args.assignedTo !== task.assignedTo) {
+      await sendNotification(
+        'Task Reassigned',
+        `The task "${task.title}" in team "${teamInfo.Item.name}" has been reassigned to you.`,
+        args.assignedTo,
+        {
+          taskId: args.taskId,
+          taskTitle: task.title,
+          teamId: args.teamId,
+          teamName: teamInfo.Item.name,
+          action: 'task_reassigned'
+        }
+      );
+    }
+    
     logSuccess('UPDATE_TASK_DETAILS', 'Task details updated successfully', { 
-      taskId: args.taskId,
-      updatedFields: Object.keys(args).filter(key => key !== 'teamId' && key !== 'taskId')
+      taskId: args.taskId 
     });
     
     return result.Attributes;
@@ -710,15 +757,6 @@ async function deleteTask(args, userId, userGroups) {
   validateRequired(args?.taskId, 'Task ID');
   
   try {
-    const membership = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-      Key: { teamId: args.teamId, userId }
-    }));
-    
-    if (!membership.Item || membership.Item.role !== 'admin') {
-      throw new AuthorizationError('Only team admins can delete tasks');
-    }
-    
     const taskResult = await dynamodb.send(new GetCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       Key: { teamId: args.teamId, taskId: args.taskId }
@@ -730,32 +768,53 @@ async function deleteTask(args, userId, userGroups) {
     
     const task = taskResult.Item;
     
+    const membership = await dynamodb.send(new GetCommand({
+      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
+      Key: { teamId: args.teamId, userId }
+    }));
+    
+    if (!membership.Item) {
+      throw new AuthorizationError('You must be a team member to delete tasks');
+    }
+    
+    if (membership.Item.role !== 'admin') {
+      throw new AuthorizationError('Only team admins can delete tasks');
+    }
+    
+    const teamInfo = await dynamodb.send(new GetCommand({
+      TableName: process.env.DYNAMODB_TEAMS_TABLE,
+      Key: { teamId: args.teamId }
+    }));
+    
+    if (!teamInfo.Item) {
+      throw new NotFoundError('Team not found');
+    }
+    
     await dynamodb.send(new DeleteCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       Key: { teamId: args.teamId, taskId: args.taskId }
     }));
     
-    if (task.assignedTo && task.assignedTo !== userId) {
+    if (task.assignedTo) {
       await sendNotification(
         'Task Deleted',
-        `Task "${task.title}" has been deleted by ${userId}`,
+        `The task "${task.title}" in team "${teamInfo.Item.name}" has been deleted.`,
         task.assignedTo,
         {
           taskId: args.taskId,
           taskTitle: task.title,
-          deletedBy: userId,
           teamId: args.teamId,
+          teamName: teamInfo.Item.name,
           action: 'task_deleted'
         }
       );
     }
     
     logSuccess('DELETE_TASK', 'Task deleted successfully', { 
-      taskId: args.taskId,
-      taskTitle: task.title
+      taskId: args.taskId 
     });
     
-    return true;
+    return { success: true };
     
   } catch (error) {
     if (error instanceof ValidationError || error instanceof AuthorizationError || error instanceof NotFoundError) {
@@ -768,14 +827,16 @@ async function deleteTask(args, userId, userGroups) {
 
 // List teams for a user
 async function listTeams(userId) {
-  console.log('[LIST_TEAMS] Starting teams list for user:', userId);
+  console.log('[LIST_TEAMS] Starting team list:', { userId });
   
   try {
     const memberships = await dynamodb.send(new QueryCommand({
       TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
       IndexName: 'userId-index',
       KeyConditionExpression: 'userId = :userId',
-      ExpressionAttributeValues: { ':userId': userId }
+      ExpressionAttributeValues: {
+        ':userId': userId
+      }
     }));
     
     if (!memberships.Items || memberships.Items.length === 0) {
@@ -783,44 +844,40 @@ async function listTeams(userId) {
       return [];
     }
     
-    const teamPromises = memberships.Items.map(async (membership) => {
-      try {
-        const team = await dynamodb.send(new GetCommand({
-          TableName: process.env.DYNAMODB_TEAMS_TABLE,
-          Key: { teamId: membership.teamId }
-        }));
-        
-        if (team.Item) {
-          return {
-            teamId: team.Item.teamId,
-            name: team.Item.name,
-            adminId: team.Item.adminId,
-            createdAt: team.Item.createdAt || new Date().toISOString(),
-            userRole: membership.role
-          };
-        }
-        return null;
-      } catch (error) {
-        console.warn(`[LIST_TEAMS] Failed to get team ${membership.teamId}:`, error.message);
-        return null;
+    const teamIds = memberships.Items.map(item => item.teamId);
+    
+    const teams = [];
+    for (const teamId of teamIds) {
+      const teamResult = await dynamodb.send(new GetCommand({
+        TableName: process.env.DYNAMODB_TEAMS_TABLE,
+        Key: { teamId }
+      }));
+      
+      if (teamResult.Item) {
+        const membership = memberships.Items.find(m => m.teamId === teamId);
+        teams.push({
+          ...teamResult.Item,
+          userRole: membership.role
+        });
       }
+    }
+    
+    logSuccess('LIST_TEAMS', 'Teams retrieved successfully', { 
+      teamCount: teams.length,
+      userId
     });
     
-    const teams = await Promise.all(teamPromises);
-    const validTeams = teams.filter(team => team !== null && team !== undefined);
-    
-    logSuccess('LIST_TEAMS', `Found ${validTeams.length} teams`, { userId });
-    return validTeams;
+    return teams;
     
   } catch (error) {
     logError('LIST_TEAMS', error, { userId });
-    throw new Error('Failed to retrieve teams');
+    throw new Error(`Failed to list teams: ${error.message}`);
   }
 }
 
-// List tasks for a team with enhanced filtering
+// List tasks for a team
 async function listTasks(args, userId, userGroups) {
-  console.log('[LIST_TASKS] Starting tasks list:', { teamId: args.teamId, userId });
+  console.log('[LIST_TASKS] Starting task list:', { args, userId });
   
   validateRequired(args?.teamId, 'Team ID');
   
@@ -831,61 +888,40 @@ async function listTasks(args, userId, userGroups) {
     }));
     
     if (!membership.Item) {
-      throw new AuthorizationError('You are not a member of this team');
+      throw new AuthorizationError('You must be a team member to list tasks');
     }
     
     const tasks = await dynamodb.send(new QueryCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       KeyConditionExpression: 'teamId = :teamId',
-      ExpressionAttributeValues: { ':teamId': args.teamId }
+      ExpressionAttributeValues: {
+        ':teamId': args.teamId
+      }
     }));
     
-    let filteredTasks;
-    
-    if (membership.Item.role === 'admin') {
-      filteredTasks = tasks.Items;
-    } else {
-      filteredTasks = tasks.Items.filter(task => 
-        task.assignedTo === userId || 
-        task.assignedTo === null || 
-        task.assignedTo === undefined
-      );
-    }
-    
-    filteredTasks.sort((a, b) => {
-      const priorityOrder = { 'High': 3, 'Medium': 2, 'Low': 1 };
-      const aPriority = priorityOrder[a.priority] || 2;
-      const bPriority = priorityOrder[b.priority] || 2;
-      
-      if (aPriority !== bPriority) {
-        return bPriority - aPriority;
-      }
-      
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
-    
-    logSuccess('LIST_TASKS', `Found ${filteredTasks.length} tasks`, { 
+    logSuccess('LIST_TASKS', 'Tasks retrieved successfully', { 
       teamId: args.teamId, 
-      userRole: membership.Item.role 
+      taskCount: tasks.Items?.length || 0 
     });
     
-    return filteredTasks;
+    return tasks.Items || [];
     
   } catch (error) {
-    if (error instanceof AuthorizationError) {
+    if (error instanceof ValidationError || error instanceof AuthorizationError) {
       throw error;
     }
-    logError('LIST_TASKS', error, { teamId: args.teamId, userId });
-    throw new Error(`Failed to retrieve tasks: ${error.message}`);
+    logError('LIST_TASKS', error, { teamId: args.teamId });
+    throw new Error(`Failed to list tasks: ${error.message}`);
   }
 }
 
 // Search tasks within a team
 async function searchTasks(args, userId, userGroups) {
-  console.log('[SEARCH_TASKS] Starting task search:', { teamId: args.teamId, searchTerm: args.searchTerm, userId });
+  console.log('[SEARCH_TASKS] Starting task search:', { args, userId });
   
   validateRequired(args?.teamId, 'Team ID');
-  validateRequired(args?.searchTerm, 'Search term');
+  validateRequired(args?.query, 'Search query');
+  validateLength(args.query, 'Search query', 1, 200);
   
   try {
     const membership = await dynamodb.send(new GetCommand({
@@ -894,47 +930,27 @@ async function searchTasks(args, userId, userGroups) {
     }));
     
     if (!membership.Item) {
-      throw new AuthorizationError('You are not a member of this team');
+      throw new AuthorizationError('You must be a team member to search tasks');
     }
     
     const tasks = await dynamodb.send(new QueryCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       KeyConditionExpression: 'teamId = :teamId',
-      ExpressionAttributeValues: { ':teamId': args.teamId }
+      ExpressionAttributeValues: {
+        ':teamId': args.teamId
+      }
     }));
     
-    const searchTerm = args.searchTerm.toLowerCase();
+    const queryLower = args.query.toLowerCase();
+    const filteredTasks = (tasks.Items || []).filter(task => 
+      task.title.toLowerCase().includes(queryLower) || 
+      task.description.toLowerCase().includes(queryLower)
+    );
     
-    let filteredTasks = tasks.Items.filter(task => {
-      if (membership.Item.role !== 'admin') {
-        if (task.assignedTo !== userId && task.assignedTo !== null && task.assignedTo !== undefined) {
-          return false;
-        }
-      }
-      
-      const titleMatch = task.title.toLowerCase().includes(searchTerm);
-      const descriptionMatch = task.description.toLowerCase().includes(searchTerm);
-      const assigneeMatch = task.assignedTo && task.assignedTo.toLowerCase().includes(searchTerm);
-      const statusMatch = task.status.toLowerCase().includes(searchTerm);
-      const priorityMatch = task.priority && task.priority.toLowerCase().includes(searchTerm);
-      
-      return titleMatch || descriptionMatch || assigneeMatch || statusMatch || priorityMatch;
-    });
-    
-    filteredTasks.sort((a, b) => {
-      const aTitle = a.title.toLowerCase().includes(searchTerm);
-      const bTitle = b.title.toLowerCase().includes(searchTerm);
-      
-      if (aTitle && !bTitle) return -1;
-      if (!aTitle && bTitle) return 1;
-      
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
-    
-    logSuccess('SEARCH_TASKS', `Found ${filteredTasks.length} matching tasks`, { 
-      teamId: args.teamId,
-      searchTerm: args.searchTerm,
-      userRole: membership.Item.role 
+    logSuccess('SEARCH_TASKS', 'Tasks searched successfully', { 
+      teamId: args.teamId, 
+      query: args.query, 
+      taskCount: filteredTasks.length 
     });
     
     return filteredTasks;
@@ -943,133 +959,78 @@ async function searchTasks(args, userId, userGroups) {
     if (error instanceof ValidationError || error instanceof AuthorizationError) {
       throw error;
     }
-    logError('SEARCH_TASKS', error, { teamId: args.teamId, searchTerm: args.searchTerm });
+    logError('SEARCH_TASKS', error, { teamId: args.teamId, query: args.query });
     throw new Error(`Failed to search tasks: ${error.message}`);
   }
 }
 
 // List members of a team
 async function listMembers(args, userId, userGroups) {
-  console.log('[LIST_MEMBERS] Starting members list:', { teamId: args.teamId, userId });
+  console.log('[LIST_MEMBERS] Starting member list:', { args, userId });
   
   validateRequired(args?.teamId, 'Team ID');
   
   try {
-    const userMembership = await dynamodb.send(new GetCommand({
+    const membership = await dynamodb.send(new GetCommand({
       TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
       Key: { teamId: args.teamId, userId }
     }));
     
-    if (!userMembership.Item) {
-      throw new AuthorizationError('You are not a member of this team');
+    if (!membership.Item) {
+      throw new AuthorizationError('You must be a team member to list members');
     }
     
     const members = await dynamodb.send(new QueryCommand({
       TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
       KeyConditionExpression: 'teamId = :teamId',
-      ExpressionAttributeValues: { ':teamId': args.teamId }
+      ExpressionAttributeValues: {
+        ':teamId': args.teamId
+      }
     }));
     
-    const sortedMembers = members.Items.sort((a, b) => {
-      if (a.role === 'admin' && b.role !== 'admin') return -1;
-      if (a.role !== 'admin' && b.role === 'admin') return 1;
-      return new Date(a.joinedAt) - new Date(b.joinedAt);
+    logSuccess('LIST_MEMBERS', 'Members retrieved successfully', { 
+      teamId: args.teamId, 
+      memberCount: members.Items?.length || 0 
     });
     
-    logSuccess('LIST_MEMBERS', `Found ${sortedMembers.length} members`, { 
-      teamId: args.teamId 
-    });
-    
-    return sortedMembers;
+    return members.Items || [];
     
   } catch (error) {
-    if (error instanceof AuthorizationError) {
+    if (error instanceof ValidationError || error instanceof AuthorizationError) {
       throw error;
     }
-    logError('LIST_MEMBERS', error, { teamId: args.teamId, userId });
-    throw new Error(`Failed to retrieve members: ${error.message}`);
+    logError('LIST_MEMBERS', error, { teamId: args.teamId });
+    throw new Error(`Failed to list members: ${error.message}`);
   }
 }
 
 // Get user details
 async function getUser(args, userId) {
-  console.log('[GET_USER] Getting user details:', { requestedUserId: args.userId, requesterId: userId });
+  console.log('[GET_USER] Starting user retrieval:', { args, userId });
   
-  validateRequired(args?.userId, 'User ID');
+  const targetUserId = args?.userId || userId;
   
   try {
-    const user = await dynamodb.send(new GetCommand({
+    const userResult = await dynamodb.send(new GetCommand({
       TableName: process.env.DYNAMODB_USERS_TABLE,
-      Key: { userId: args.userId }
+      Key: { userId: targetUserId }
     }));
     
-    if (user.Item) {
-      logSuccess('GET_USER', 'User found in database', { userId: args.userId });
-      return user.Item;
+    if (!userResult.Item) {
+      throw new NotFoundError('User not found');
     }
     
-    const defaultUser = {
-      userId: args.userId,
-      email: args.userId,
-      name: args.userId.includes('@') ? args.userId.split('@')[0] : args.userId,
-      createdAt: new Date().toISOString(),
-      isDefault: true
-    };
+    logSuccess('GET_USER', 'User retrieved successfully', { 
+      targetUserId 
+    });
     
-    console.log('[GET_USER] User not found in database, returning default user');
-    return defaultUser;
+    return userResult.Item;
     
   } catch (error) {
-    logError('GET_USER', error, { requestedUserId: args.userId });
-    throw new Error('Failed to retrieve user information');
-  }
-}
-
-// Enhanced notification system
-async function sendNotification(subject, message, recipient, metadata = {}) {
-  if (!process.env.SNS_TOPIC_ARN) {
-    console.warn('[NOTIFICATION] SNS Topic ARN not configured, skipping notification');
-    return;
-  }
-  
-  try {
-    const messageAttributes = {
-      email: { DataType: 'String', StringValue: recipient },
-      action: { DataType: 'String', StringValue: metadata.action || 'notification' }
-    };
-    
-    Object.keys(metadata).forEach(key => {
-      if (key !== 'action' && typeof metadata[key] === 'string') {
-        messageAttributes[key] = { DataType: 'String', StringValue: metadata[key] };
-      }
-    });
-    
-    const snsParams = {
-      TopicArn: process.env.SNS_TOPIC_ARN,
-      Subject: subject,
-      Message: JSON.stringify({
-        default: message,
-        email: message,
-        metadata: metadata
-      }, null, 2),
-      MessageStructure: 'json',
-      MessageAttributes: messageAttributes
-    };
-    
-    await snsClient.send(new PublishCommand(snsParams));
-    
-    console.log('[NOTIFICATION] Notification sent successfully:', {
-      recipient,
-      subject,
-      action: metadata.action
-    });
-    
-  } catch (error) {
-    console.error('[NOTIFICATION] Failed to send notification:', {
-      error: error.message,
-      recipient,
-      subject,
-      metadata
-    });
+    if (error instanceof NotFoundError) {
+      throw error;
+    }
+    logError('GET_USER', error, { targetUserId });
+    throw new Error(`Failed to get user: ${error.message}`);
   }
 }
