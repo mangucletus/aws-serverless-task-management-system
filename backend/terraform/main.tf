@@ -382,6 +382,23 @@ resource "aws_appsync_resolver" "list_teams" {
   field       = "listTeams"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "listTeams",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 resource "aws_appsync_resolver" "list_tasks" {
@@ -389,6 +406,23 @@ resource "aws_appsync_resolver" "list_tasks" {
   field       = "listTasks"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "listTasks",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 resource "aws_appsync_resolver" "search_tasks" {
@@ -396,6 +430,23 @@ resource "aws_appsync_resolver" "search_tasks" {
   field       = "searchTasks"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "searchTasks",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 resource "aws_appsync_resolver" "list_members" {
@@ -403,6 +454,23 @@ resource "aws_appsync_resolver" "list_members" {
   field       = "listMembers"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "listMembers",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 resource "aws_appsync_resolver" "get_user" {
@@ -410,6 +478,23 @@ resource "aws_appsync_resolver" "get_user" {
   field       = "getUser"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "getUser",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 # AppSync Resolvers for Mutations
@@ -418,6 +503,23 @@ resource "aws_appsync_resolver" "create_team" {
   field       = "createTeam"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "createTeam",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 resource "aws_appsync_resolver" "add_member" {
@@ -425,6 +527,23 @@ resource "aws_appsync_resolver" "add_member" {
   field       = "addMember"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "addMember",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 resource "aws_appsync_resolver" "create_task" {
@@ -432,6 +551,23 @@ resource "aws_appsync_resolver" "create_task" {
   field       = "createTask"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "createTask",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 resource "aws_appsync_resolver" "update_task" {
@@ -439,6 +575,23 @@ resource "aws_appsync_resolver" "update_task" {
   field       = "updateTask"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "updateTask",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 resource "aws_appsync_resolver" "update_task_details" {
@@ -446,6 +599,23 @@ resource "aws_appsync_resolver" "update_task_details" {
   field       = "updateTaskDetails"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "updateTaskDetails",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 resource "aws_appsync_resolver" "delete_task" {
@@ -453,6 +623,23 @@ resource "aws_appsync_resolver" "delete_task" {
   field       = "deleteTask"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
+
+  request_template = <<EOF
+{
+  "version": "2017-02-28",
+  "operation": "Invoke",
+  "payload": {
+    "fieldName": "deleteTask",
+    "arguments": $util.toJson($context.arguments),
+    "identity": $util.toJson($context.identity),
+    "info": $util.toJson($context.info)
+  }
+}
+EOF
+
+  response_template = <<EOF
+$util.toJson($context.result)
+EOF
 }
 
 # S3 Bucket for Frontend Hosting
@@ -510,6 +697,13 @@ resource "aws_s3_bucket_policy" "frontend_policy" {
   })
   
   depends_on = [aws_s3_bucket_public_access_block.frontend]
+}
+
+# Variables
+variable "region" {
+  description = "AWS region"
+  type        = string
+  default     = "eu-west-1"
 }
 
 # Outputs

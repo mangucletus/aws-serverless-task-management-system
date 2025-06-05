@@ -158,9 +158,10 @@ function TaskList({ user }) {
       setLoading(true);
       setError(null);
       
+      // Fixed: Use 'query' parameter instead of 'searchTerm' to match backend
       const response = await client.graphql({
         query: searchTasks,
-        variables: { teamId, searchTerm: searchTerm.trim() },
+        variables: { teamId, query: searchTerm.trim() },
         authMode: 'userPool'
       });
       

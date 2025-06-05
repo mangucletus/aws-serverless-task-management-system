@@ -33,10 +33,11 @@ export const listTasks = gql`
   }
 `;
 
-// Defines a GraphQL query to search tasks within a specific team
+// Fixed: Defines a GraphQL query to search tasks within a specific team
+// Changed parameter name from searchTerm to query to match backend expectation
 export const searchTasks = gql`
-  query SearchTasks($teamId: ID!, $searchTerm: String!) {
-    searchTasks(teamId: $teamId, searchTerm: $searchTerm) {
+  query SearchTasks($teamId: ID!, $query: String!) {
+    searchTasks(teamId: $teamId, query: $query) {
       teamId
       taskId
       title

@@ -140,38 +140,64 @@ exports.handler = async (event) => {
     event: JSON.stringify(event, null, 2)
   });
   
-  // Parse payload from event
-  const { fieldName, arguments: argsStr, identity: identityStr } = event.payload || {};
-  const args = argsStr ? JSON.parse(argsStr) : {};
-  const identity = identityStr ? JSON.parse(identityStr) : null;
-  
-  if (!fieldName) {
-    throw ValidationError('Missing fieldName in event.payload');
-  }
-  
-  if (!identity) {
-    throw new AuthorizationError('Authentication required - missing user identity');
-  }
-  
-  // Normalize user ID
-  let userId;
   try {
-    userId = normalizeUserId(identity);
-  } catch (error) {
-    logError('USER_ID_NORMALIZATION', error, { identity });
-    throw error;
-  }
-  
-  const userGroups = identity['cognito:groups'] || [];
-  
-  console.log('Processing request:', {
-    fieldName,
-    userId,
-    userGroups,
-    argsCount: args ? Object.keys(args).length : 0
-  });
+    // Handle different event structures from AppSync
+    let fieldName, args, identity;
+    
+    if (event.info && event.info.fieldName) {
+      // Direct resolver format
+      fieldName = event.info.fieldName;
+      args = event.arguments || {};
+      identity = event.identity;
+    } else if (event.fieldName) {
+      // Alternative format
+      fieldName = event.fieldName;
+      args = event.arguments || {};
+      identity = event.identity;
+    } else if (event.payload) {
+      // Wrapped payload format
+      fieldName = event.payload.fieldName;
+      args = event.payload.arguments ? JSON.parse(event.payload.arguments) : {};
+      identity = event.payload.identity ? JSON.parse(event.payload.identity) : null;
+    } else {
+      // Try to extract from top level
+      fieldName = event.operation || event.field;
+      args = event.variables || event.arguments || {};
+      identity = event.requestContext?.identity || event.identity;
+    }
+    
+    console.log('Extracted event data:', {
+      fieldName,
+      args,
+      identity: identity ? 'present' : 'missing'
+    });
+    
+    if (!fieldName) {
+      throw new ValidationError('Missing fieldName in event - unable to determine operation');
+    }
+    
+    if (!identity) {
+      throw new AuthorizationError('Authentication required - missing user identity');
+    }
+    
+    // Normalize user ID
+    let userId;
+    try {
+      userId = normalizeUserId(identity);
+    } catch (error) {
+      logError('USER_ID_NORMALIZATION', error, { identity });
+      throw error;
+    }
+    
+    const userGroups = identity['cognito:groups'] || [];
+    
+    console.log('Processing request:', {
+      fieldName,
+      userId,
+      userGroups,
+      argsCount: args ? Object.keys(args).length : 0
+    });
 
-  try {
     let result;
     
     switch (fieldName) {
@@ -221,13 +247,17 @@ exports.handler = async (event) => {
     return result;
     
   } catch (err) {
-    logError('HANDLER', err, { fieldName, userId, userGroups });
+    logError('HANDLER', err, { 
+      fieldName: fieldName || 'unknown', 
+      userId: userId || 'unknown',
+      eventStructure: Object.keys(event || {})
+    });
     
     if (err instanceof ValidationError || err instanceof AuthorizationError || err instanceof NotFoundError) {
       throw err;
     }
     
-    const error = new Error(`${fieldName} failed: ${err.message}`);
+    const error = new Error(`Operation failed: ${err.message}`);
     error.errorType = 'InternalError';
     throw error;
   }
