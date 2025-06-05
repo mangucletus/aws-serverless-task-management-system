@@ -1,245 +1,322 @@
-import { useState, useEffect, useMemo } from 'react'; // Imports React hooks: useState for state management, useEffect for side effects, useMemo for memoized computations
-import { useParams, useNavigate, Link } from 'react-router-dom'; // Imports React Router hooks and components: useParams for URL parameters, useNavigate for navigation, Link for routing
-import { generateClient } from 'aws-amplify/api'; // Imports function to create an AWS Amplify GraphQL client
-import { listTasks, searchTasks, listMembers } from '../graphql/queries'; // Imports GraphQL queries for listing tasks, searching tasks, and listing team members
-import { updateTask, deleteTask } from '../graphql/mutations'; // Imports GraphQL mutations for updating and deleting tasks
-import LoadingSpinner from './LoadingSpinner'; // Imports LoadingSpinner component for loading states
-import ErrorMessage from './ErrorMessage'; // Imports ErrorMessage component for displaying errors
+import { useState, useEffect, useMemo } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { generateClient } from 'aws-amplify/api';
+import { listTasks, searchTasks, listMembers } from '../graphql/queries';
+import { updateTask, deleteTask } from '../graphql/mutations';
+import LoadingSpinner from './LoadingSpinner';
+import ErrorMessage from './ErrorMessage';
 
-// Initializes the AWS Amplify GraphQL client for API requests
 const client = generateClient();
 
-// Defines color classes for task status badges
 const statusColors = {
-  'Not Started': 'bg-gray-100 text-gray-800', // Gray background and text for "Not Started" status
-  'In Progress': 'bg-blue-100 text-blue-800', // Blue background and text for "In Progress" status
-  'Completed': 'bg-green-100 text-green-800' // Green background and text for "Completed" status
+  'Not Started': 'bg-gray-100 text-gray-800',
+  'In Progress': 'bg-blue-100 text-blue-800',
+  'Completed': 'bg-green-100 text-green-800'
 };
 
-// Defines color classes for task priority badges
 const priorityColors = {
-  'Low': 'bg-green-100 text-green-800', // Green background and text for "Low" priority
-  'Medium': 'bg-yellow-100 text-yellow-800', // Yellow background and text for "Medium" priority
-  'High': 'bg-red-100 text-red-800' // Red background and text for "High" priority
+  'Low': 'bg-green-100 text-green-800',
+  'Medium': 'bg-yellow-100 text-yellow-800',
+  'High': 'bg-red-100 text-red-800'
 };
 
-// Defines the TaskList component, accepting user (user data) as a prop
 function TaskList({ user }) {
-  // Extracts teamId from URL parameters
   const { teamId } = useParams();
-  // State to store the list of tasks
   const [tasks, setTasks] = useState([]);
-  // State to track the user's role in the team, defaults to 'member'
   const [userRole, setUserRole] = useState('member');
-  // State to track loading status
   const [loading, setLoading] = useState(true);
-  // State to track which tasks are being updated (object mapping taskId to boolean)
   const [updating, setUpdating] = useState({});
-  // State to track which tasks are being deleted (object mapping taskId to boolean)
   const [deleting, setDeleting] = useState({});
-  // State to manage task filter (e.g., 'all', 'my-tasks', or specific status)
   const [filter, setFilter] = useState('all');
-  // State to store search term for task searching
   const [searchTerm, setSearchTerm] = useState('');
-  // State to manage sorting criterion (e.g., 'created', 'title')
   const [sortBy, setSortBy] = useState('created');
-  // State to manage sort order ('asc' or 'desc')
   const [sortOrder, setSortOrder] = useState('desc');
-  // State to store error messages
   const [error, setError] = useState(null);
-  // Hook for programmatic navigation
+  const [teamExists, setTeamExists] = useState(true);
   const navigate = useNavigate();
 
-  // Effect to fetch user role and tasks when teamId changes
   useEffect(() => {
-    fetchUserRoleAndTasks(); // Calls function to fetch data
-  }, [teamId]); // Dependency array ensures effect runs when teamId changes
+    fetchUserRoleAndTasks();
+  }, [teamId]);
 
-  // Async function to fetch user's role and tasks
   async function fetchUserRoleAndTasks() {
     try {
-      setLoading(true); // Sets loading state to true
-      setError(null); // Clears any previous errors
+      setLoading(true);
+      setError(null);
+      setTeamExists(true);
 
-      // Fetches team members to determine user's role
+      console.log('TaskList - Fetching data for user:', user?.userId, 'team:', teamId);
+
+      // First, try to get team members to verify team exists and get user role
       const membersResponse = await client.graphql({
-        query: listMembers, // Uses listMembers GraphQL query
-        variables: { teamId }, // Passes teamId as variable
-        authMode: 'userPool' // Uses Cognito User Pool authentication
+        query: listMembers,
+        variables: { teamId },
+        authMode: 'userPool'
       });
       
-      // Finds the current user's membership record
-      const currentUserMembership = membersResponse.data.listMembers.find(
-        member => member.userId === user?.username || member.userId === user?.email // Matches by username or email
-      );
-      
-      if (currentUserMembership) {
-        setUserRole(currentUserMembership.role); // Sets user role (e.g., 'admin' or 'member')
+      console.log('TaskList - Members response:', membersResponse);
+
+      if (!membersResponse.data?.listMembers) {
+        setTeamExists(false);
+        setError('Team not found or you do not have access to this team.');
+        return;
       }
 
-      // Fetches tasks for the team
+      // Find current user's membership
+      const currentUserMembership = membersResponse.data.listMembers.find(
+        member => {
+          const memberUserId = member.userId;
+          const currentUserId = user?.userId || user?.username || user?.email;
+          return memberUserId === currentUserId;
+        }
+      );
+      
+      console.log('TaskList - Current user membership:', currentUserMembership);
+
+      if (currentUserMembership) {
+        setUserRole(currentUserMembership.role);
+      } else {
+        setTeamExists(false);
+        setError('You are not a member of this team.');
+        return;
+      }
+
+      // Now fetch tasks
       await fetchTasks();
       
     } catch (err) {
-      console.error('Fetch user role and tasks error:', err); // Logs errors
-      setError(`Failed to load tasks: ${err.message || 'Unknown error'}`); // Sets error message
+      console.error('TaskList - Fetch user role and tasks error:', err);
+      
+      let errorMessage = 'Failed to load team information. ';
+      
+      if (err.errors && err.errors.length > 0) {
+        const firstError = err.errors[0];
+        if (firstError.errorType === 'AuthorizationError') {
+          errorMessage = 'You do not have permission to view this team.';
+          setTeamExists(false);
+        } else if (firstError.errorType === 'NotFoundError') {
+          errorMessage = 'Team not found.';
+          setTeamExists(false);
+        } else {
+          errorMessage += firstError.message || 'Please try again.';
+        }
+      } else if (err.message) {
+        if (err.message.includes('NetworkError')) {
+          errorMessage += 'Network connection issue. Please check your internet connection.';
+        } else {
+          errorMessage += err.message;
+        }
+      } else {
+        errorMessage += 'Please try refreshing the page.';
+      }
+      
+      setError(errorMessage);
     } finally {
-      setLoading(false); // Sets loading state to false
+      setLoading(false);
     }
   }
 
-  // Async function to fetch tasks for the team
   async function fetchTasks() {
     try {
+      console.log('TaskList - Fetching tasks for team:', teamId);
+      
       const response = await client.graphql({
-        query: listTasks, // Uses listTasks GraphQL query
-        variables: { teamId }, // Passes teamId as variable
-        authMode: 'userPool' // Uses Cognito User Pool authentication
+        query: listTasks,
+        variables: { teamId },
+        authMode: 'userPool'
       });
       
-      setTasks(response.data.listTasks || []); // Sets tasks state, defaulting to empty array if no data
+      console.log('TaskList - Tasks response:', response);
+      
+      if (response.data?.listTasks) {
+        setTasks(response.data.listTasks);
+      } else {
+        setTasks([]);
+      }
     } catch (err) {
-      console.error('Fetch tasks error:', err); // Logs errors
-      throw err; // Rethrows error to be caught by caller
+      console.error('TaskList - Fetch tasks error:', err);
+      
+      let errorMessage = 'Failed to load tasks. ';
+      if (err.errors && err.errors.length > 0) {
+        errorMessage += err.errors[0].message || 'Please try again.';
+      } else {
+        errorMessage += err.message || 'Please try again.';
+      }
+      
+      setError(errorMessage);
+      setTasks([]);
     }
   }
 
-  // Async function to handle task search
   async function handleSearch() {
     if (!searchTerm.trim()) {
-      fetchTasks(); // Fetches all tasks if search term is empty
+      fetchTasks();
       return;
     }
 
     try {
-      setLoading(true); // Sets loading state to true
-      setError(null); // Clears any previous errors
+      setLoading(true);
+      setError(null);
       
       const response = await client.graphql({
-        query: searchTasks, // Uses searchTasks GraphQL query
-        variables: { teamId, searchTerm: searchTerm.trim() }, // Passes teamId and trimmed search term
-        authMode: 'userPool' // Uses Cognito User Pool authentication
+        query: searchTasks,
+        variables: { teamId, searchTerm: searchTerm.trim() },
+        authMode: 'userPool'
       });
       
-      setTasks(response.data.searchTasks || []); // Sets tasks state with search results
+      setTasks(response.data.searchTasks || []);
     } catch (err) {
-      console.error('Search tasks error:', err); // Logs errors
-      setError(`Search failed: ${err.message || 'Unknown error'}`); // Sets error message
+      console.error('TaskList - Search tasks error:', err);
+      setError(`Search failed: ${err.message || 'Unknown error'}`);
     } finally {
-      setLoading(false); // Sets loading state to false
+      setLoading(false);
     }
   }
 
-  // Async function to update a task's status
   async function updateTaskStatus(taskId, status) {
     try {
-      setUpdating(prev => ({ ...prev, [taskId]: true })); // Marks task as being updated
-      setError(null); // Clears any previous errors
+      setUpdating(prev => ({ ...prev, [taskId]: true }));
+      setError(null);
       
       await client.graphql({
-        query: updateTask, // Uses updateTask GraphQL mutation
-        variables: { teamId, taskId, status }, // Passes teamId, taskId, and new status
-        authMode: 'userPool' // Uses Cognito User Pool authentication
+        query: updateTask,
+        variables: { teamId, taskId, status },
+        authMode: 'userPool'
       });
       
-      await fetchTasks(); // Refreshes task list
+      await fetchTasks();
     } catch (err) {
-      console.error('Update task error:', err); // Logs errors
-      setError(`Failed to update task: ${err.message || 'Unknown error'}`); // Sets error message
+      console.error('TaskList - Update task error:', err);
+      setError(`Failed to update task: ${err.message || 'Unknown error'}`);
     } finally {
-      setUpdating(prev => ({ ...prev, [taskId]: false })); // Clears updating state for task
+      setUpdating(prev => ({ ...prev, [taskId]: false }));
     }
   }
 
-  // Async function to handle task deletion
   async function handleDeleteTask(taskId, taskTitle) {
-    // Confirms deletion with user
     if (!window.confirm(`Are you sure you want to delete the task "${taskTitle}"? This action cannot be undone.`)) {
-      return; // Exits if user cancels
+      return;
     }
 
     try {
-      setDeleting(prev => ({ ...prev, [taskId]: true })); // Marks task as being deleted
-      setError(null); // Clears any previous errors
+      setDeleting(prev => ({ ...prev, [taskId]: true }));
+      setError(null);
       
       await client.graphql({
-        query: deleteTask, // Uses deleteTask GraphQL mutation
-        variables: { teamId, taskId }, // Passes teamId and taskId
-        authMode: 'userPool' // Uses Cognito User Pool authentication
+        query: deleteTask,
+        variables: { teamId, taskId },
+        authMode: 'userPool'
       });
       
-      await fetchTasks(); // Refreshes task list
+      await fetchTasks();
     } catch (err) {
-      console.error('Delete task error:', err); // Logs errors
-      setError(`Failed to delete task: ${err.message || 'Unknown error'}`); // Sets error message
+      console.error('TaskList - Delete task error:', err);
+      setError(`Failed to delete task: ${err.message || 'Unknown error'}`);
     } finally {
-      setDeleting(prev => ({ ...prev, [taskId]: false })); // Clears deleting state for task
+      setDeleting(prev => ({ ...prev, [taskId]: false }));
     }
   }
 
-  // Memoized computation for filtered and sorted tasks
   const filteredAndSortedTasks = useMemo(() => {
     let filtered = tasks.filter(task => {
-      // Filters tasks based on selected filter
       if (filter === 'my-tasks') {
-        return task.assignedTo === user?.username || task.assignedTo === user?.email; // Shows only tasks assigned to user
+        return task.assignedTo === user?.username || task.assignedTo === user?.email || task.assignedTo === user?.userId;
       }
       if (filter !== 'all') {
-        return task.status === filter; // Shows tasks with matching status
+        return task.status === filter;
       }
-      return true; // Shows all tasks if filter is 'all'
+      return true;
     });
 
-    // Sorts filtered tasks
     filtered.sort((a, b) => {
       let comparison = 0;
       
       switch (sortBy) {
         case 'title':
-          comparison = a.title.localeCompare(b.title); // Sorts alphabetically by title
+          comparison = a.title.localeCompare(b.title);
           break;
         case 'status':
-          comparison = a.status.localeCompare(b.status); // Sorts alphabetically by status
+          comparison = a.status.localeCompare(b.status);
           break;
         case 'priority':
-          const priorityOrder = { 'High': 3, 'Medium': 2, 'Low': 1 }; // Defines priority order
-          comparison = (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2); // Sorts by priority
+          const priorityOrder = { 'High': 3, 'Medium': 2, 'Low': 1 };
+          comparison = (priorityOrder[a.priority] || 2) - (priorityOrder[b.priority] || 2);
           break;
         case 'deadline':
-          const aDeadline = a.deadline ? new Date(a.deadline) : new Date('9999-12-31'); // Uses far future date if no deadline
+          const aDeadline = a.deadline ? new Date(a.deadline) : new Date('9999-12-31');
           const bDeadline = b.deadline ? new Date(b.deadline) : new Date('9999-12-31');
-          comparison = aDeadline - bDeadline; // Sorts by deadline
+          comparison = aDeadline - bDeadline;
           break;
         case 'created':
         default:
-          comparison = new Date(a.createdAt) - new Date(b.createdAt); // Sorts by creation date
+          comparison = new Date(a.createdAt) - new Date(b.createdAt);
           break;
       }
       
-      return sortOrder === 'desc' ? -comparison : comparison; // Reverses order if descending
+      return sortOrder === 'desc' ? -comparison : comparison;
     });
 
-    return filtered; // Returns filtered and sorted tasks
-  }, [tasks, filter, sortBy, sortOrder, user]); // Dependencies for memoization
+    return filtered;
+  }, [tasks, filter, sortBy, sortOrder, user]);
 
-  // Memoized computation for task statistics
   const taskCounts = useMemo(() => {
+    const userTasks = tasks.filter(t => 
+      t.assignedTo === user?.username || 
+      t.assignedTo === user?.email || 
+      t.assignedTo === user?.userId
+    );
+    
     return {
-      total: tasks.length, // Total number of tasks
-      notStarted: tasks.filter(t => t.status === 'Not Started').length, // Count of "Not Started" tasks
-      inProgress: tasks.filter(t => t.status === 'In Progress').length, // Count of "In Progress" tasks
-      completed: tasks.filter(t => t.status === 'Completed').length, // Count of "Completed" tasks
-      myTasks: tasks.filter(t => t.assignedTo === user?.username || t.assignedTo === user?.email).length, // Count of tasks assigned to user
-      overdue: tasks.filter(t => t.deadline && new Date(t.deadline) < new Date() && t.status !== 'Completed').length // Count of overdue tasks
+      total: tasks.length,
+      notStarted: tasks.filter(t => t.status === 'Not Started').length,
+      inProgress: tasks.filter(t => t.status === 'In Progress').length,
+      completed: tasks.filter(t => t.status === 'Completed').length,
+      myTasks: userTasks.length,
+      overdue: tasks.filter(t => t.deadline && new Date(t.deadline) < new Date() && t.status !== 'Completed').length
     };
-  }, [tasks, user]); // Dependencies for memoization
+  }, [tasks, user]);
 
-  // Shows loading spinner if initial load and no tasks
-  if (loading && tasks.length === 0) {
-    return <LoadingSpinner message="Loading tasks..." />; // Displays loading spinner
+  function handleRetry() {
+    setError(null);
+    fetchUserRoleAndTasks();
   }
 
-  // Renders the main task list UI
+  if (loading && tasks.length === 0) {
+    return <LoadingSpinner message="Loading tasks..." />;
+  }
+
+  if (!teamExists) {
+    return (
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center py-12">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Team Not Found</h3>
+          <p className="text-gray-600 mb-4">
+            The team you're looking for doesn't exist or you don't have access to it.
+          </p>
+          <div className="flex justify-center space-x-3">
+            <button
+              onClick={handleRetry}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              Try Again
+            </button>
+            <Link
+              to="/"
+              className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              Back to Dashboard
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-6xl mx-auto"> 
       {/* Header */}
@@ -247,8 +324,8 @@ function TaskList({ user }) {
         <div>
           <div className="flex items-center space-x-2 mb-2">
             <Link 
-              to="/" // Links to Dashboard
-              className="text-gray-500 hover:text-gray-700 text-sm font-medium" // Styling for link
+              to="/" 
+              className="text-gray-500 hover:text-gray-700 text-sm font-medium"
             >
               Dashboard
             </Link>
@@ -267,8 +344,8 @@ function TaskList({ user }) {
         </div>
         {userRole === 'admin' && (
           <Link
-            to={`/create-task/${teamId}`} // Links to task creation page
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2" // Button styling
+            to={`/create-task/${teamId}`}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -282,63 +359,72 @@ function TaskList({ user }) {
       {error && (
         <div className="mb-6"> 
           <ErrorMessage 
-            message={error} // Passes error message
-            onDismiss={() => setError(null)} // Clears error on dismiss
+            message={error}
+            onDismiss={() => setError(null)}
           />
+          {error.includes('Failed to load') && (
+            <div className="mt-3">
+              <button
+                onClick={handleRetry}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8"> 
         <StatsCard
-          title="Total" // Card title
-          value={taskCounts.total} // Total task count
-          icon="📋" // Clipboard emoji
-          isActive={filter === 'all'} // Highlights if filter is 'all'
-          onClick={() => setFilter('all')} // Sets filter to 'all'
+          title="Total"
+          value={taskCounts.total}
+          icon="📋"
+          isActive={filter === 'all'}
+          onClick={() => setFilter('all')}
         />
         <StatsCard
-          title="My Tasks" // Card title
-          value={taskCounts.myTasks} // User's task count
-          icon="👤" // Person emoji
-          isActive={filter === 'my-tasks'} // Highlights if filter is 'my-tasks'
-          onClick={() => setFilter('my-tasks')} // Sets filter to 'my-tasks'
+          title="My Tasks"
+          value={taskCounts.myTasks}
+          icon="👤"
+          isActive={filter === 'my-tasks'}
+          onClick={() => setFilter('my-tasks')}
         />
         <StatsCard
-          title="Not Started" // Card title
-          value={taskCounts.notStarted} // Not Started task count
-          icon="⚪" // White circle emoji
-          isActive={filter === 'Not Started'} // Highlights if filter is 'Not Started'
-          onClick={() => setFilter('Not Started')} // Sets filter to 'Not Started'
+          title="Not Started"
+          value={taskCounts.notStarted}
+          icon="⚪"
+          isActive={filter === 'Not Started'}
+          onClick={() => setFilter('Not Started')}
         />
         <StatsCard
-          title="In Progress" // Card title
-          value={taskCounts.inProgress} // In Progress task count
-          icon="🔵" // Blue circle emoji
-          isActive={filter === 'In Progress'} // Highlights if filter is 'In Progress'
-          onClick={() => setFilter('In Progress')} // Sets filter to 'In Progress'
+          title="In Progress"
+          value={taskCounts.inProgress}
+          icon="🔵"
+          isActive={filter === 'In Progress'}
+          onClick={() => setFilter('In Progress')}
         />
         <StatsCard
-          title="Completed" // Card title
-          value={taskCounts.completed} // Completed task count
-          icon="✅" // Checkmark emoji
-          isActive={filter === 'Completed'} // Highlights if filter is 'Completed'
-          onClick={() => setFilter('Completed')} // Sets filter to 'Completed'
+          title="Completed"
+          value={taskCounts.completed}
+          icon="✅"
+          isActive={filter === 'Completed'}
+          onClick={() => setFilter('Completed')}
         />
         <StatsCard
-          title="Overdue" // Card title
-          value={taskCounts.overdue} // Overdue task count
-          icon="⚠️" // Warning emoji
-          isActive={false} // Never highlighted as a filter
-          onClick={() => {}} // No action
-          danger={taskCounts.overdue > 0} // Highlights in red if overdue tasks exist
+          title="Overdue"
+          value={taskCounts.overdue}
+          icon="⚠️"
+          isActive={false}
+          onClick={() => {}}
+          danger={taskCounts.overdue > 0}
         />
       </div>
 
       {/* Search and Controls */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6"> 
         <div className="p-6"> 
-          {/* Search Bar */}
           <div className="flex flex-col md:flex-row gap-4 mb-4"> 
             <div className="flex-1"> 
               <div className="relative"> 
@@ -346,43 +432,42 @@ function TaskList({ user }) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
                 <input
-                  type="text" // Text input for search
-                  placeholder="Search tasks by title, description, assignee, status, or priority..." // Placeholder text
-                  value={searchTerm} // Binds to searchTerm state
-                  onChange={(e) => setSearchTerm(e.target.value)} // Updates search term
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()} // Triggers search on Enter key
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" // Input styling
+                  type="text"
+                  placeholder="Search tasks by title, description, assignee, status, or priority..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
             </div>
             <div className="flex space-x-2"> 
               <button
-                onClick={handleSearch} // Triggers search
-                disabled={loading} // Disables during loading
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-6 py-3 rounded-lg text-sm font-medium transition-colors" // Search button styling
+                onClick={handleSearch}
+                disabled={loading}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-6 py-3 rounded-lg text-sm font-medium transition-colors"
               >
-                {loading ? 'Searching...' : 'Search'} 
+                {loading ? 'Searching...' : 'Search'}
               </button>
               <button
                 onClick={() => {
-                  setSearchTerm(''); // Clears search term
-                  fetchTasks(); // Fetches all tasks
+                  setSearchTerm('');
+                  fetchTasks();
                 }}
-                className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-lg text-sm font-medium transition-colors" // Clear button styling
+                className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-lg text-sm font-medium transition-colors"
               >
                 Clear
               </button>
             </div>
           </div>
 
-          {/* Sort Controls */}
           <div className="flex flex-wrap items-center gap-4"> 
             <div className="flex items-center space-x-2"> 
               <label className="text-sm font-medium text-gray-700">Sort by:</label> 
               <select
-                value={sortBy} // Binds to sortBy state
-                onChange={(e) => setSortBy(e.target.value)} // Updates sort criterion
-                className="border border-gray-300 rounded px-3 py-1 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" // Select styling
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="border border-gray-300 rounded px-3 py-1 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="created">Date Created</option> 
                 <option value="title">Title</option> 
@@ -393,8 +478,8 @@ function TaskList({ user }) {
             </div>
             
             <button
-              onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')} // Toggles sort order
-              className="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-900" // Button styling
+              onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+              className="flex items-center space-x-1 text-sm text-gray-600 hover:text-gray-900"
             >
               <span>{sortOrder === 'asc' ? 'Ascending' : 'Descending'}</span> 
               <svg className={`w-4 h-4 transform ${sortOrder === 'asc' ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"> 
@@ -411,28 +496,30 @@ function TaskList({ user }) {
           <div className="divide-y divide-gray-200"> 
             {filteredAndSortedTasks.map((task) => (
               <TaskCard
-                key={task.taskId} // Unique key for each task
-                task={task} // Task data
-                user={user} // User data
-                userRole={userRole} // User's role
-                updating={updating[task.taskId]} // Updating state for task
-                deleting={deleting[task.taskId]} // Deleting state for task
-                onUpdateStatus={updateTaskStatus} // Status update handler
-                onDelete={handleDeleteTask} // Delete handler
+                key={task.taskId}
+                task={task}
+                user={user}
+                userRole={userRole}
+                updating={updating[task.taskId]}
+                deleting={deleting[task.taskId]}
+                onUpdateStatus={updateTaskStatus}
+                onDelete={handleDeleteTask}
               />
             ))}
           </div>
         ) : (
           <EmptyTasksState
-            filter={filter} // Current filter
-            searchTerm={searchTerm} // Current search term
-            teamId={teamId} // Team ID
-            userRole={userRole} // User's role
-            onClearFilter={() => setFilter('all')} // Clears filter
+            filter={filter}
+            searchTerm={searchTerm}
+            teamId={teamId}
+            userRole={userRole}
+            onClearFilter={() => setFilter('all')}
             onClearSearch={() => {
-              setSearchTerm(''); // Clears search term
-              fetchTasks(); // Fetches all tasks
-            }} // Clears search
+              setSearchTerm('');
+              fetchTasks();
+            }}
+            hasError={!!error}
+            onRetry={handleRetry}
           />
         )}
       </div>
@@ -441,17 +528,16 @@ function TaskList({ user }) {
 }
 
 // Stats Card Component
-// Displays a clickable card with task statistics
 function StatsCard({ title, value, icon, isActive, onClick, danger = false }) {
   return (
     <button
-      onClick={onClick} // Triggers click handler
+      onClick={onClick}
       className={`p-4 rounded-lg border transition-all text-left focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
         isActive 
-          ? 'border-blue-300 bg-blue-50' // Active styling
+          ? 'border-blue-300 bg-blue-50' 
           : danger && value > 0
-          ? 'border-red-200 bg-red-50 hover:border-red-300' // Danger styling for overdue tasks
-          : 'border-gray-200 hover:border-gray-300 hover:shadow-sm' // Default styling
+          ? 'border-red-200 bg-red-50 hover:border-red-300'
+          : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
       }`}
     >
       <div className="flex items-center justify-between"> 
@@ -470,15 +556,10 @@ function StatsCard({ title, value, icon, isActive, onClick, danger = false }) {
 }
 
 // Task Card Component
-// Displays a single task with details and actions
 function TaskCard({ task, user, userRole, updating, deleting, onUpdateStatus, onDelete }) {
-  // Checks if task is assigned to the current user
-  const isAssigned = task.assignedTo === user?.username || task.assignedTo === user?.email;
-  // Checks if task is overdue
+  const isAssigned = task.assignedTo === user?.username || task.assignedTo === user?.email || task.assignedTo === user?.userId;
   const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'Completed';
-  // Determines if user can update status (assigned or admin)
   const canUpdateStatus = isAssigned || userRole === 'admin';
-  // Determines if user can delete task (admin only)
   const canDelete = userRole === 'admin';
   
   return (
@@ -512,12 +593,12 @@ function TaskCard({ task, user, userRole, updating, deleting, onUpdateStatus, on
               <span>
                 {task.assignedTo ? (
                   isAssigned ? (
-                    <span className="font-medium text-blue-600">Assigned to you</span> // Highlights if assigned to user
+                    <span className="font-medium text-blue-600">Assigned to you</span>
                   ) : (
-                    `Assigned to: ${task.assignedTo}` // Shows assignee
+                    `Assigned to: ${task.assignedTo}`
                   )
                 ) : (
-                  'Unassigned' // Shows if no assignee
+                  'Unassigned'
                 )}
               </span>
             </div>
@@ -528,8 +609,8 @@ function TaskCard({ task, user, userRole, updating, deleting, onUpdateStatus, on
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 <span>
-                  Due: {new Date(task.deadline).toLocaleDateString()} 
-                  {isOverdue && ' (Overdue)'} 
+                  Due: {new Date(task.deadline).toLocaleDateString()}
+                  {isOverdue && ' (Overdue)'}
                 </span>
               </div>
             )}
@@ -554,36 +635,34 @@ function TaskCard({ task, user, userRole, updating, deleting, onUpdateStatus, on
 
         {/* Task Actions */}
         <div className="ml-4 flex flex-col space-y-2"> 
-          {/* Status Update - Only for assigned users or admins */}
           {canUpdateStatus && (
             <div className="flex items-center space-x-2"> 
               <select
-                value={task.status} // Binds to task status
-                onChange={(e) => onUpdateStatus(task.taskId, e.target.value)} // Updates status
-                disabled={updating || deleting} // Disables during actions
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100" // Dropdown styling
+                value={task.status}
+                onChange={(e) => onUpdateStatus(task.taskId, e.target.value)}
+                disabled={updating || deleting}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
               >
                 <option value="Not Started">Not Started</option>
                 <option value="In Progress">In Progress</option>
                 <option value="Completed">Completed</option>
               </select>
               {updating && (
-                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div> // Spinner during update
+                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
               )}
             </div>
           )}
           
-          {/* Admin Actions */}
           {canDelete && (
             <div className="flex space-x-2"> 
               <button
-                onClick={() => onDelete(task.taskId, task.title)} // Triggers deletion
-                disabled={deleting} // Disables during deletion
-                className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50" // Button styling
-                title="Delete Task" // Tooltip
+                onClick={() => onDelete(task.taskId, task.title)}
+                disabled={deleting}
+                className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                title="Delete Task"
               >
                 {deleting ? (
-                  <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin"></div> // Spinner during deletion
+                  <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin"></div>
                 ) : (
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"> 
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -598,78 +677,146 @@ function TaskCard({ task, user, userRole, updating, deleting, onUpdateStatus, on
   );
 }
 
-// Empty Tasks State Component
-// Displays a message when no tasks are available
-function EmptyTasksState({ filter, searchTerm, teamId, userRole, onClearFilter, onClearSearch }) {
-  // Function to generate empty state message based on context
+// Enhanced Empty Tasks State Component
+function EmptyTasksState({ filter, searchTerm, teamId, userRole, onClearFilter, onClearSearch, hasError, onRetry }) {
   const getEmptyMessage = () => {
+    if (hasError) {
+      return {
+        icon: '⚠️',
+        title: 'Unable to load tasks',
+        message: 'There was an issue loading tasks. Please try again.',
+        actions: (
+          <div className="flex justify-center space-x-3">
+            <button
+              onClick={onRetry}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              Try Again
+            </button>
+            <Link
+              to="/"
+              className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              Back to Dashboard
+            </Link>
+          </div>
+        )
+      };
+    }
+
     if (searchTerm) {
       return {
-        icon: '🔍', // Search emoji
-        title: 'No tasks found', // Title
-        message: `No tasks match your search "${searchTerm}". Try different keywords or clear the search.`, // Message
-        action: (
-          <button
-            onClick={onClearSearch} // Clears search
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors" // Button styling
-          >
-            Clear Search
-          </button>
+        icon: '🔍',
+        title: 'No tasks found',
+        message: `No tasks match your search "${searchTerm}". Try different keywords or clear the search.`,
+        actions: (
+          <div className="flex justify-center space-x-3">
+            <button
+              onClick={onClearSearch}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              Clear Search
+            </button>
+            {userRole === 'admin' && (
+              <Link
+                to={`/create-task/${teamId}`}
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                Create Task
+              </Link>
+            )}
+          </div>
         )
       };
     }
     
     if (filter === 'my-tasks') {
       return {
-        icon: '👤', // Person emoji
-        title: 'No tasks assigned to you', // Title
-        message: 'You don\'t have any tasks assigned at the moment.', // Message
-        action: (
-          <button
-            onClick={onClearFilter} // Clears filter
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors" // Button styling
-          >
-            View All Tasks
-          </button>
+        icon: '👤',
+        title: 'No tasks assigned to you',
+        message: 'You don\'t have any tasks assigned at the moment. Check back later or view all tasks.',
+        actions: (
+          <div className="flex justify-center space-x-3">
+            <button
+              onClick={onClearFilter}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              View All Tasks
+            </button>
+            {userRole === 'admin' && (
+              <Link
+                to={`/create-task/${teamId}`}
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                Create Task
+              </Link>
+            )}
+          </div>
         )
       };
     }
     
     if (filter !== 'all') {
       return {
-        icon: '📋', // Clipboard emoji
-        title: `No ${filter.toLowerCase()} tasks`, // Title
-        message: `There are no tasks with the status "${filter}".`, // Message
-        action: (
-          <button
-            onClick={onClearFilter} // Clears filter
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors" // Button styling
-          >
-            View All Tasks
-          </button>
+        icon: '📋',
+        title: `No ${filter.toLowerCase()} tasks`,
+        message: `There are no tasks with the status "${filter}". Try viewing all tasks or creating a new one.`,
+        actions: (
+          <div className="flex justify-center space-x-3">
+            <button
+              onClick={onClearFilter}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              View All Tasks
+            </button>
+            {userRole === 'admin' && (
+              <Link
+                to={`/create-task/${teamId}`}
+                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                Create Task
+              </Link>
+            )}
+          </div>
         )
       };
     }
     
     return {
-      icon: '📝', // Note emoji
-      title: 'No tasks yet', // Title
+      icon: '📝',
+      title: 'No tasks yet',
       message: userRole === 'admin' 
-        ? 'Create your first task to get started with project management.' // Admin message
-        : 'No tasks have been created for this team yet.', // Member message
-      action: userRole === 'admin' ? (
-        <Link
-          to={`/create-task/${teamId}`} // Links to task creation
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors inline-block" // Button styling
-        >
-          Create Your First Task
-        </Link>
-      ) : null // No action for non-admins
+        ? 'Get started by creating your first task. Tasks help you organize work and track progress.' 
+        : 'No tasks have been created for this team yet. Contact your team admin to get started.',
+      actions: userRole === 'admin' ? (
+        <div className="flex justify-center space-x-3">
+          <Link
+            to={`/create-task/${teamId}`}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            Create Your First Task
+          </Link>
+          <Link
+            to={`/team/${teamId}`}
+            className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            Manage Team
+          </Link>
+        </div>
+      ) : (
+        <div className="flex justify-center">
+          <Link
+            to={`/team/${teamId}`}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            View Team Details
+          </Link>
+        </div>
+      )
     };
   };
 
-  // Destructures empty state properties
-  const { icon, title, message, action } = getEmptyMessage();
+  const { icon, title, message, actions } = getEmptyMessage();
 
   return (
     <div className="text-center py-12"> 
@@ -677,11 +824,45 @@ function EmptyTasksState({ filter, searchTerm, teamId, userRole, onClearFilter, 
         <span className="text-3xl">{icon}</span> 
       </div>
       <h3 className="text-lg font-medium text-gray-900 mb-2">{title}</h3> 
-      <p className="text-gray-600 mb-4 max-w-md mx-auto">{message}</p> 
-      {action} 
+      <p className="text-gray-600 mb-6 max-w-md mx-auto">{message}</p> 
+      {actions}
+      
+      {/* Additional helpful tips */}
+      {!hasError && !searchTerm && filter === 'all' && (
+        <div className="mt-8 bg-blue-50 rounded-lg p-4 max-w-md mx-auto">
+          <div className="flex items-start space-x-3">
+            <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="text-left">
+              <h4 className="text-sm font-medium text-blue-900 mb-1">
+                {userRole === 'admin' ? 'Getting Started Tips' : 'About Tasks'}
+              </h4>
+              <ul className="text-sm text-blue-800 space-y-1">
+                {userRole === 'admin' ? (
+                  <>
+                    <li>• Create tasks to organize your team's work</li>
+                    <li>• Assign tasks to team members</li>
+                    <li>• Set priorities and deadlines</li>
+                    <li>• Track progress with status updates</li>
+                  </>
+                ) : (
+                  <>
+                    <li>• Tasks will appear here when created by admins</li>
+                    <li>• You can update status of assigned tasks</li>
+                    <li>• Use filters to find specific tasks</li>
+                    <li>• Search to quickly locate tasks</li>
+                  </>
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// Exports the TaskList component as the default export
 export default TaskList;

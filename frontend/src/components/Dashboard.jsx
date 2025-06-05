@@ -1,171 +1,231 @@
-import { useState, useEffect } from 'react'; // Imports React hooks: useState for state management, useEffect for handling side effects
-import { useNavigate } from 'react-router-dom'; // Imports useNavigate hook for programmatic navigation in React Router
-import { generateClient } from 'aws-amplify/api'; // Imports function to create an AWS Amplify GraphQL client
-import { getCurrentUser } from 'aws-amplify/auth'; // Imports function to retrieve the current authenticated user's data
-import { listTeams } from '../graphql/queries'; // Imports GraphQL query for listing teams
-import { createTeam } from '../graphql/mutations'; // Imports GraphQL mutation for creating a new team
-import LoadingSpinner from './LoadingSpinner'; // Imports LoadingSpinner component to display during loading states
-import ErrorMessage from './ErrorMessage'; // Imports ErrorMessage component to display error messages
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { generateClient } from 'aws-amplify/api';
+import { getCurrentUser } from 'aws-amplify/auth';
+import { listTeams } from '../graphql/queries';
+import { createTeam } from '../graphql/mutations';
+import LoadingSpinner from './LoadingSpinner';
+import ErrorMessage from './ErrorMessage';
 
-// Initializes the AWS Amplify GraphQL client for making API requests
 const client = generateClient();
 
-// Defines the Dashboard component, which serves as the main view for authenticated users
 function Dashboard({ user }) {
-  // State to store the list of teams retrieved from the API
   const [teams, setTeams] = useState([]);
-  // State to track loading status while fetching data
   const [loading, setLoading] = useState(true);
-  // State to track whether a team creation operation is in progress
   const [creating, setCreating] = useState(false);
-  // State to control visibility of the team creation form
   const [showCreateForm, setShowCreateForm] = useState(false);
-  // State to store the team name input value
   const [teamName, setTeamName] = useState('');
-  // State to store any error messages
   const [error, setError] = useState(null);
-  // State to store the current user's enhanced data
   const [currentUser, setCurrentUser] = useState(null);
-  // State to store team statistics (total, admin, and member counts)
   const [stats, setStats] = useState({
-    totalTeams: 0, // Total number of teams
-    adminTeams: 0, // Number of teams where user is admin
-    memberTeams: 0 // Number of teams where user is a member
+    totalTeams: 0,
+    adminTeams: 0,
+    memberTeams: 0
   });
-  // Hook to navigate programmatically to different routes
   const navigate = useNavigate();
 
-  // Effect to load the current user's data when the user prop changes
   useEffect(() => {
-    loadCurrentUser(); // Calls function to fetch and set user data
-  }, [user]); // Dependency array ensures effect runs when user prop changes
+    loadCurrentUser();
+  }, [user]);
 
-  // Effect to fetch teams when currentUser is available
   useEffect(() => {
     if (currentUser) {
-      fetchTeams(); // Calls function to fetch teams
+      fetchTeams();
     }
-  }, [currentUser]); // Dependency array ensures effect runs when currentUser changes
+  }, [currentUser]);
 
-  // Effect to update team statistics when teams list changes
   useEffect(() => {
-    // Update stats when teams change
     if (teams.length > 0) {
-      const adminTeams = teams.filter(team => team.userRole === 'admin').length; // Counts teams where user is admin
-      const memberTeams = teams.filter(team => team.userRole === 'member').length; // Counts teams where user is a member
+      const adminTeams = teams.filter(team => team.userRole === 'admin').length;
+      const memberTeams = teams.filter(team => team.userRole === 'member').length;
       
       setStats({
-        totalTeams: teams.length, // Sets total team count
-        adminTeams, // Sets admin team count
-        memberTeams // Sets member team count
+        totalTeams: teams.length,
+        adminTeams,
+        memberTeams
+      });
+    } else {
+      setStats({
+        totalTeams: 0,
+        adminTeams: 0,
+        memberTeams: 0
       });
     }
-  }, [teams]); // Dependency array ensures effect runs when teams array changes
+  }, [teams]);
 
-  // Async function to load and enhance current user data
   async function loadCurrentUser() {
     try {
-      const userData = await getCurrentUser(); // Fetches current user data from AWS Amplify
-      setCurrentUser({
-        ...userData, // Spreads fetched user data
-        email: userData.signInDetails?.loginId || userData.username, // Sets email, falling back to username
-        userId: userData.username // Sets userId to username
-      });
+      const userData = await getCurrentUser();
+      console.log('Dashboard - Current user data:', userData);
+      
+      // Create comprehensive user object
+      const enhancedUser = {
+        ...userData,
+        email: userData.signInDetails?.loginId || userData.username || 'unknown@example.com',
+        userId: userData.username || userData.sub,
+        username: userData.username || userData.sub
+      };
+      
+      console.log('Dashboard - Enhanced user:', enhancedUser);
+      setCurrentUser(enhancedUser);
     } catch (error) {
-      console.error('Error loading current user:', error); // Logs any errors
-      setError('Failed to load user information'); // Sets error message
+      console.error('Error loading current user:', error);
+      
+      // Create fallback user from prop
+      const fallbackUser = {
+        email: user?.signInDetails?.loginId || user?.username || 'unknown@example.com',
+        userId: user?.username || user?.sub || 'unknown',
+        username: user?.username || user?.sub || 'unknown'
+      };
+      
+      console.log('Dashboard - Using fallback user:', fallbackUser);
+      setCurrentUser(fallbackUser);
     }
   }
 
-  // Async function to fetch teams from the GraphQL API
   async function fetchTeams() {
     try {
-      setLoading(true); // Sets loading state to true
-      setError(null); // Clears any previous errors
+      setLoading(true);
+      setError(null);
+      
+      console.log('Dashboard - Fetching teams for user:', currentUser?.userId);
       
       const response = await client.graphql({
-        query: listTeams, // Uses the listTeams GraphQL query
-        authMode: 'userPool' // Specifies Cognito User Pool authentication
+        query: listTeams,
+        authMode: 'userPool'
       });
       
-      console.log('Teams response:', response); // Logs response for debugging
-      setTeams(response.data.listTeams || []); // Sets teams state, defaulting to empty array if no data
+      console.log('Dashboard - Teams response:', response);
+      
+      if (response.data && response.data.listTeams) {
+        setTeams(response.data.listTeams);
+      } else {
+        console.log('Dashboard - No teams data in response');
+        setTeams([]);
+      }
+      
     } catch (err) {
-      console.error('Fetch teams error:', err); // Logs any errors
-      setError(`Failed to load teams: ${err.message || 'Unknown error'}`); // Sets error message
+      console.error('Dashboard - Fetch teams error:', err);
+      
+      // Enhanced error handling
+      let errorMessage = 'Failed to load teams. ';
+      
+      if (err.errors && err.errors.length > 0) {
+        const firstError = err.errors[0];
+        if (firstError.errorType === 'AuthorizationError') {
+          errorMessage += 'Please check your permissions or try signing in again.';
+        } else if (firstError.errorType === 'ValidationError') {
+          errorMessage += firstError.message;
+        } else {
+          errorMessage += firstError.message || 'Please try again later.';
+        }
+      } else if (err.message) {
+        if (err.message.includes('NetworkError') || err.message.includes('fetch')) {
+          errorMessage += 'Network connection issue. Please check your internet connection.';
+        } else if (err.message.includes('GraphQL')) {
+          errorMessage += 'Service temporarily unavailable. Please try again in a moment.';
+        } else {
+          errorMessage += err.message;
+        }
+      } else {
+        errorMessage += 'Unknown error occurred. Please try refreshing the page.';
+      }
+      
+      setError(errorMessage);
+      setTeams([]); // Ensure teams is empty on error
     } finally {
-      setLoading(false); // Sets loading state to false
+      setLoading(false);
     }
   }
 
-  // Async function to handle team creation form submission
   async function handleCreateTeam(e) {
-    e.preventDefault(); // Prevents default form submission behavior
+    e.preventDefault();
     
     if (!teamName.trim()) {
-      setError('Team name is required'); // Sets error if team name is empty
+      setError('Team name is required');
       return;
     }
 
     if (teamName.trim().length > 100) {
-      setError('Team name cannot exceed 100 characters'); // Sets error if team name is too long
+      setError('Team name cannot exceed 100 characters');
       return;
     }
 
     try {
-      setCreating(true); // Sets creating state to true
-      setError(null); // Clears any previous errors
+      setCreating(true);
+      setError(null);
       
-      console.log('Creating team with name:', teamName.trim()); // Logs team name for debugging
+      console.log('Dashboard - Creating team with name:', teamName.trim());
+      console.log('Dashboard - Current user for team creation:', currentUser);
       
       const response = await client.graphql({
-        query: createTeam, // Uses the createTeam GraphQL mutation
-        variables: { name: teamName.trim() }, // Passes trimmed team name as variable
-        authMode: 'userPool' // Specifies Cognito User Pool authentication
+        query: createTeam,
+        variables: { name: teamName.trim() },
+        authMode: 'userPool'
       });
       
-      console.log('Create team response:', response); // Logs response for debugging
+      console.log('Dashboard - Create team response:', response);
       
-      setTeamName(''); // Clears team name input
-      setShowCreateForm(false); // Hides the create team form
-      await fetchTeams(); // Refreshes the teams list
-      
-      // Show success message
-      setError(null); // Ensures no error is displayed
-      
-    } catch (err) {
-      console.error('Create team error:', err); // Logs any errors
-      
-      // Extracts meaningful error message
-      let errorMessage = 'Failed to create team. Please try again.'; // Default error message
-      if (err.errors && err.errors.length > 0) {
-        errorMessage = err.errors[0].message; // Uses first GraphQL error message if available
-      } else if (err.message) {
-        errorMessage = err.message; // Uses general error message if available
+      if (response.data && response.data.createTeam) {
+        setTeamName('');
+        setShowCreateForm(false);
+        await fetchTeams(); // Refresh teams list
+        
+        // Show success message briefly
+        setTimeout(() => {
+          setError(null);
+        }, 3000);
+      } else {
+        throw new Error('Invalid response from server');
       }
       
-      setError(errorMessage); // Sets error message
+    } catch (err) {
+      console.error('Dashboard - Create team error:', err);
+      
+      let errorMessage = 'Failed to create team. ';
+      
+      if (err.errors && err.errors.length > 0) {
+        const firstError = err.errors[0];
+        if (firstError.errorType === 'ValidationError') {
+          errorMessage = firstError.message;
+        } else if (firstError.errorType === 'AuthorizationError') {
+          errorMessage += 'You do not have permission to create teams.';
+        } else {
+          errorMessage += firstError.message || 'Please try again.';
+        }
+      } else if (err.message) {
+        if (err.message.includes('Cannot find module')) {
+          errorMessage += 'Server configuration issue. Please contact support.';
+        } else {
+          errorMessage += err.message;
+        }
+      } else {
+        errorMessage += 'Please try again later.';
+      }
+      
+      setError(errorMessage);
     } finally {
-      setCreating(false); // Sets creating state to false
+      setCreating(false);
     }
   }
 
-  // Function to handle canceling the team creation form
   function handleCancelCreate() {
-    setShowCreateForm(false); // Hides the create team form
-    setTeamName(''); // Clears team name input
-    setError(null); // Clears any errors
+    setShowCreateForm(false);
+    setTeamName('');
+    setError(null);
   }
 
-  // Renders a loading spinner while data is being fetched
+  function handleRetryFetch() {
+    setError(null);
+    fetchTeams();
+  }
+
   if (loading) {
-    return <LoadingSpinner message="Loading your teams..." />; // Displays loading spinner with message
+    return <LoadingSpinner message="Loading your teams..." />;
   }
 
-  // Derives display name from user's email or username
   const userDisplayName = currentUser?.email?.split('@')[0] || currentUser?.username || 'User';
 
-  // Renders the main dashboard content
   return (
     <div className="max-w-6xl mx-auto">  
       {/* Header */}
@@ -182,33 +242,44 @@ function Dashboard({ user }) {
       {error && (
         <div className="mb-6"> 
           <ErrorMessage 
-            message={error} // Passes error message to component
-            onDismiss={() => setError(null)} // Clears error when dismissed
+            message={error}
+            onDismiss={() => setError(null)}
+            type={error.includes('Successfully') ? 'success' : 'error'}
           />
+          {error.includes('Failed to load teams') && (
+            <div className="mt-3">
+              <button
+                onClick={handleRetryFetch}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"> 
         <StatsCard
-          title="Total Teams" // Card title
-          value={stats.totalTeams} // Displays total team count
-          icon={<TeamsIcon />} // Renders team icon
-          color="blue" // Sets card color scheme
+          title="Total Teams"
+          value={stats.totalTeams}
+          icon={<TeamsIcon />}
+          color="blue"
         />
         
         <StatsCard
-          title="Teams as Admin" // Card title
-          value={stats.adminTeams} // Displays admin team count
-          icon={<AdminIcon />} // Renders admin icon
-          color="green" // Sets card color scheme
+          title="Teams as Admin"
+          value={stats.adminTeams}
+          icon={<AdminIcon />}
+          color="green"
         />
         
         <StatsCard
-          title="Teams as Member" // Card title
-          value={stats.memberTeams} // Displays member team count
-          icon={<MemberIcon />} // Renders member icon
-          color="purple" // Sets card color scheme
+          title="Teams as Member"
+          value={stats.memberTeams}
+          icon={<MemberIcon />}
+          color="purple"
         />
       </div>
 
@@ -217,8 +288,8 @@ function Dashboard({ user }) {
         <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center"> 
           <h2 className="text-xl font-semibold text-gray-900">Your Teams</h2> 
           <button
-            onClick={() => setShowCreateForm(true)} // Shows create team form on click
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2" // Styles for create team button
+            onClick={() => setShowCreateForm(true)}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"> 
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -230,12 +301,11 @@ function Dashboard({ user }) {
         {/* Create Team Form */}
         {showCreateForm && (
           <CreateTeamForm
-            teamName={teamName} // Passes team name input value
-            setTeamName={setTeamName} // Passes function to update team name
-            onSubmit={handleCreateTeam} // Passes form submission handler
-            onCancel={handleCancelCreate} // Passes cancel handler
-            creating={creating} // Passes creating state
-            error={error} // Passes error message
+            teamName={teamName}
+            setTeamName={setTeamName}
+            onSubmit={handleCreateTeam}
+            onCancel={handleCancelCreate}
+            creating={creating}
           />
         )}
 
@@ -245,16 +315,18 @@ function Dashboard({ user }) {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"> 
               {teams.map((team) => (
                 <TeamCard
-                  key={team.teamId} // Unique key for each team card
-                  team={team} // Passes team data
-                  currentUser={currentUser} // Passes current user data
-                  onNavigate={navigate} // Passes navigation function
+                  key={team.teamId}
+                  team={team}
+                  currentUser={currentUser}
+                  onNavigate={navigate}
                 />
               ))}
             </div>
           ) : (
             <EmptyTeamsState
-              onCreateTeam={() => setShowCreateForm(true)} // Shows create team form on click
+              onCreateTeam={() => setShowCreateForm(true)}
+              hasError={!!error}
+              onRetry={handleRetryFetch}
             />
           )}
         </div>
@@ -266,39 +338,38 @@ function Dashboard({ user }) {
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3> 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"> 
             <QuickActionCard
-              title="Recent Teams" // Card title
-              description="Access your recently active teams" // Card description
-              icon={<RecentIcon />} // Renders recent teams icon
+              title="Recent Teams"
+              description="Access your recently active teams"
+              icon={<RecentIcon />}
               onClick={() => {
                 if (teams.length > 0) {
-                  navigate(`/team/${teams[0].teamId}`); // Navigates to the first team's page
+                  navigate(`/team/${teams[0].teamId}`);
                 }
               }}
             />
             
             <QuickActionCard
-              title="All Tasks" // Card title
-              description="View tasks across all teams" // Card description
-              icon={<TasksIcon />} // Renders tasks icon
+              title="All Tasks"
+              description="View tasks across all teams"
+              icon={<TasksIcon />}
               onClick={() => {
-                // Navigate to the first team's tasks
                 if (teams.length > 0) {
-                  navigate(`/tasks/${teams[0].teamId}`); // Navigates to the first team's tasks page
+                  navigate(`/tasks/${teams[0].teamId}`);
                 }
               }}
             />
             
             <QuickActionCard
-              title="Team Management" // Card title
-              description="Manage team settings and members" // Card description
-              icon={<SettingsIcon />} // Renders settings icon
+              title="Team Management"
+              description="Manage team settings and members"
+              icon={<SettingsIcon />}
               onClick={() => {
                 if (teams.length > 0) {
-                  const adminTeam = teams.find(team => team.userRole === 'admin'); // Finds first admin team
+                  const adminTeam = teams.find(team => team.userRole === 'admin');
                   if (adminTeam) {
-                    navigate(`/team/${adminTeam.teamId}`); // Navigates to admin team page
+                    navigate(`/team/${adminTeam.teamId}`);
                   } else {
-                    navigate(`/team/${teams[0].teamId}`); // Falls back to first team
+                    navigate(`/team/${teams[0].teamId}`);
                   }
                 }
               }}
@@ -311,13 +382,11 @@ function Dashboard({ user }) {
 }
 
 // Stats Card Component
-// Displays a card with a title, value, icon, and color scheme
 function StatsCard({ title, value, icon, color }) {
-  // Defines color classes for different card types
   const colorClasses = {
-    blue: 'bg-blue-100 text-blue-600', // Blue color scheme
-    green: 'bg-green-100 text-green-600', // Green color scheme
-    purple: 'bg-purple-100 text-purple-600' // Purple color scheme
+    blue: 'bg-blue-100 text-blue-600',
+    green: 'bg-green-100 text-green-600',
+    purple: 'bg-purple-100 text-purple-600'
   };
 
   return (
@@ -336,8 +405,7 @@ function StatsCard({ title, value, icon, color }) {
 }
 
 // Create Team Form Component
-// Renders a form for creating a new team
-function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating, error }) {
+function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating }) {
   return (
     <div className="px-6 py-4 bg-gray-50 border-b border-gray-200"> 
       <form onSubmit={onSubmit} className="space-y-4"> 
@@ -346,15 +414,15 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating, e
             Team Name
           </label>
           <input
-            type="text" // Text input field
-            id="teamName" // Input ID for accessibility
-            placeholder="Enter team name (max 100 characters)..." // Placeholder text
-            value={teamName} // Binds input value to state
-            onChange={(e) => setTeamName(e.target.value)} // Updates state on input change
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" // Input styling
-            disabled={creating} // Disables input during team creation
-            maxLength={100} // Limits input to 100 characters
-            required // Makes input required
+            type="text"
+            id="teamName"
+            placeholder="Enter team name (max 100 characters)..."
+            value={teamName}
+            onChange={(e) => setTeamName(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            disabled={creating}
+            maxLength={100}
+            required
           />
           <p className="text-xs text-gray-500 mt-1"> 
             {teamName.length}/100 
@@ -363,9 +431,9 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating, e
         
         <div className="flex space-x-3"> 
           <button
-            type="submit" // Submit button
-            disabled={creating || !teamName.trim()} // Disables button during creation or if no team name
-            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2" // Button styling
+            type="submit"
+            disabled={creating || !teamName.trim()}
+            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2"
           >
             {creating ? (
               <>
@@ -383,10 +451,10 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating, e
           </button>
           
           <button
-            type="button" // Cancel button
-            onClick={onCancel} // Triggers cancel handler
-            disabled={creating} // Disables button during creation
-            className="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors" // Button styling
+            type="button"
+            onClick={onCancel}
+            disabled={creating}
+            className="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
             Cancel
           </button>
@@ -397,23 +465,20 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating, e
 }
 
 // Team Card Component
-// Displays a card for each team with details and actions
 function TeamCard({ team, currentUser, onNavigate }) {
-  // Configuration for different user roles
   const roleConfig = {
     admin: {
-      badge: '👑 Admin', // Badge text for admin role
-      badgeColor: 'bg-red-100 text-red-800', // Badge styling for admin
-      description: 'You can manage this team' // Description for admin role
+      badge: '👑 Admin',
+      badgeColor: 'bg-red-100 text-red-800',
+      description: 'You can manage this team'
     },
     member: {
-      badge: '👤 Member', // Badge text for member role
-      badgeColor: 'bg-blue-100 text-blue-800', // Badge styling for member
-      description: 'You are a team member' // Description for member role
+      badge: '👤 Member',
+      badgeColor: 'bg-blue-100 text-blue-800',
+      description: 'You are a team member'
     }
   };
 
-  // Selects config based on user role, defaults to member
   const config = roleConfig[team.userRole] || roleConfig.member;
 
   return (
@@ -441,14 +506,14 @@ function TeamCard({ team, currentUser, onNavigate }) {
       
       <div className="flex space-x-2"> 
         <button
-          onClick={() => onNavigate(`/team/${team.teamId}`)} // Navigates to team management page
-          className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2" // Manage button styling
+          onClick={() => onNavigate(`/team/${team.teamId}`)}
+          className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         >
           Manage
         </button>
         <button
-          onClick={() => onNavigate(`/tasks/${team.teamId}`)} // Navigates to team tasks page
-          className="flex-1 bg-green-50 hover:bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2" // Tasks button styling
+          onClick={() => onNavigate(`/tasks/${team.teamId}`)}
+          className="flex-1 bg-green-50 hover:bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
         >
           Tasks
         </button>
@@ -457,9 +522,36 @@ function TeamCard({ team, currentUser, onNavigate }) {
   );
 }
 
-// Empty Teams State Component
-// Displays a message and action when no teams are available
-function EmptyTeamsState({ onCreateTeam }) {
+// Enhanced Empty Teams State Component
+function EmptyTeamsState({ onCreateTeam, hasError, onRetry }) {
+  if (hasError) {
+    return (
+      <div className="text-center py-12"> 
+        <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4"> 
+          <svg className="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"> 
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-medium text-gray-900 mb-2">Unable to load teams</h3> 
+        <p className="text-gray-600 mb-4">There was an issue loading your teams. Please try again.</p> 
+        <div className="flex justify-center space-x-3">
+          <button
+            onClick={onRetry}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            Try Again
+          </button>
+          <button
+            onClick={onCreateTeam}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+          >
+            Create Team
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="text-center py-12"> 
       <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4"> 
@@ -470,8 +562,8 @@ function EmptyTeamsState({ onCreateTeam }) {
       <h3 className="text-lg font-medium text-gray-900 mb-2">No teams yet</h3> 
       <p className="text-gray-600 mb-4">Create your first team to start managing tasks and collaborating.</p> 
       <button
-        onClick={onCreateTeam} // Shows create team form
-        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2" // Button styling
+        onClick={onCreateTeam}
+        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
       >
         Create Your First Team
       </button>
@@ -480,12 +572,11 @@ function EmptyTeamsState({ onCreateTeam }) {
 }
 
 // Quick Action Card Component
-// Displays a clickable card for quick navigation actions
 function QuickActionCard({ title, description, icon, onClick }) {
   return (
     <button
-      onClick={onClick} // Triggers provided click handler
-      className="p-4 border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all text-left focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2" // Card styling
+      onClick={onClick}
+      className="p-4 border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all text-left focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
     >
       <div className="flex items-center space-x-3"> 
         <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center"> 
@@ -501,7 +592,6 @@ function QuickActionCard({ title, description, icon, onClick }) {
 }
 
 // Icon Components
-// Defines SVG icon for teams
 function TeamsIcon() {
   return (
     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"> 
@@ -510,7 +600,6 @@ function TeamsIcon() {
   );
 }
 
-// Defines SVG icon for admin role
 function AdminIcon() {
   return (
     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"> 
@@ -519,7 +608,6 @@ function AdminIcon() {
   );
 }
 
-// Defines SVG icon for member role
 function MemberIcon() {
   return (
     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"> 
@@ -528,7 +616,6 @@ function MemberIcon() {
   );
 }
 
-// Defines SVG icon for recent teams
 function RecentIcon() {
   return (
     <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"> 
@@ -537,7 +624,6 @@ function RecentIcon() {
   );
 }
 
-// Defines SVG icon for tasks
 function TasksIcon() {
   return (
     <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"> 
@@ -546,7 +632,6 @@ function TasksIcon() {
   );
 }
 
-// Defines SVG icon for settings
 function SettingsIcon() {
   return (
     <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -556,5 +641,4 @@ function SettingsIcon() {
   );
 }
 
-// Exports the Dashboard component as the default export
 export default Dashboard;
