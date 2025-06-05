@@ -48,20 +48,6 @@ resource "aws_cognito_user_pool" "pool" {
     email_subject        = "Task Management - Verify your email"
     email_message        = "Your verification code is {####}"
   }
-  
-  schema {
-    attribute_data_type = "String"
-    name               = "email"
-    required           = true
-    mutable           = true
-  }
-  
-  schema {
-    attribute_data_type = "String"
-    name               = "name"
-    required           = false
-    mutable           = true
-  }
 }
 
 # Cognito User Pool Client
@@ -102,10 +88,6 @@ resource "aws_cognito_user_pool_client" "client" {
     id_token      = "hours"
     refresh_token = "days"
   }
-  
-  # Read attributes that the client can access
-  read_attributes = ["email", "name", "email_verified"]
-  write_attributes = ["email", "name"]
 }
 
 # Cognito User Pool Domain
