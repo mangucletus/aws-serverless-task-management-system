@@ -48,6 +48,20 @@ resource "aws_cognito_user_pool" "pool" {
     email_subject        = "Task Management - Verify your email"
     email_message        = "Your verification code is {####}"
   }
+  
+  schema {
+    attribute_data_type = "String"
+    name               = "email"
+    required           = true
+    mutable           = true
+  }
+  
+  schema {
+    attribute_data_type = "String"
+    name               = "name"
+    required           = false
+    mutable           = true
+  }
 }
 
 # Cognito User Pool Client
@@ -88,6 +102,10 @@ resource "aws_cognito_user_pool_client" "client" {
     id_token      = "hours"
     refresh_token = "days"
   }
+  
+  # Read attributes that the client can access
+  read_attributes = ["email", "name", "email_verified"]
+  write_attributes = ["email", "name"]
 }
 
 # Cognito User Pool Domain
@@ -109,7 +127,7 @@ resource "aws_cognito_user_group" "member" {
   description  = "Regular team members"
 }
 
-# DynamoDB Tables
+# DynamoDB Tables with enhanced configuration
 resource "aws_dynamodb_table" "users" {
   name           = "Users"
   billing_mode   = "PAY_PER_REQUEST"
@@ -118,6 +136,22 @@ resource "aws_dynamodb_table" "users" {
   attribute {
     name = "userId"
     type = "S"
+  }
+  
+  # Add Global Secondary Index for email lookups
+  attribute {
+    name = "email"
+    type = "S"
+  }
+  
+  global_secondary_index {
+    name               = "email-index"
+    hash_key           = "email"
+    projection_type    = "ALL"
+  }
+  
+  point_in_time_recovery {
+    enabled = true
   }
   
   tags = {
@@ -133,6 +167,22 @@ resource "aws_dynamodb_table" "teams" {
   attribute {
     name = "teamId"
     type = "S"
+  }
+  
+  # Add Global Secondary Index for admin lookups
+  attribute {
+    name = "adminId"
+    type = "S"
+  }
+  
+  global_secondary_index {
+    name               = "adminId-index"
+    hash_key           = "adminId"
+    projection_type    = "ALL"
+  }
+  
+  point_in_time_recovery {
+    enabled = true
   }
   
   tags = {
@@ -161,6 +211,10 @@ resource "aws_dynamodb_table" "memberships" {
     projection_type    = "ALL"
   }
   
+  point_in_time_recovery {
+    enabled = true
+  }
+  
   tags = {
     Name = "TaskManagement-Memberships"
   }
@@ -179,6 +233,22 @@ resource "aws_dynamodb_table" "tasks" {
   attribute {
     name = "taskId"
     type = "S"
+  }
+  
+  # Add Global Secondary Index for assignee lookups
+  attribute {
+    name = "assignedTo"
+    type = "S"
+  }
+  
+  global_secondary_index {
+    name               = "assignedTo-index"
+    hash_key           = "assignedTo"
+    projection_type    = "ALL"
+  }
+  
+  point_in_time_recovery {
+    enabled = true
   }
   
   tags = {
@@ -279,7 +349,10 @@ resource "aws_iam_role_policy" "lambda_policy" {
           aws_dynamodb_table.teams.arn,
           aws_dynamodb_table.memberships.arn,
           aws_dynamodb_table.tasks.arn,
-          "${aws_dynamodb_table.memberships.arn}/index/*"
+          "${aws_dynamodb_table.users.arn}/index/*",
+          "${aws_dynamodb_table.teams.arn}/index/*",
+          "${aws_dynamodb_table.memberships.arn}/index/*",
+          "${aws_dynamodb_table.tasks.arn}/index/*"
         ]
       },
       {
@@ -364,7 +437,7 @@ resource "aws_iam_role_policy" "appsync_lambda_policy" {
   })
 }
 
-# AppSync Data Source for Lambda
+# AppSync Data Source for Lambda (Using Direct Lambda Resolvers)
 resource "aws_appsync_datasource" "lambda" {
   api_id           = aws_appsync_graphql_api.api.id
   name             = "LambdaDataSource"
@@ -376,29 +449,15 @@ resource "aws_appsync_datasource" "lambda" {
   }
 }
 
-# AppSync Resolvers for Queries
+# Direct Lambda Resolvers (No VTL Templates) - Query Resolvers
 resource "aws_appsync_resolver" "list_teams" {
   api_id      = aws_appsync_graphql_api.api.id
   field       = "listTeams"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "listTeams",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  # Direct Lambda Resolver - no mapping templates needed
+  kind = "UNIT"
 }
 
 resource "aws_appsync_resolver" "list_tasks" {
@@ -406,23 +465,8 @@ resource "aws_appsync_resolver" "list_tasks" {
   field       = "listTasks"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "listTasks",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
 resource "aws_appsync_resolver" "search_tasks" {
@@ -430,23 +474,8 @@ resource "aws_appsync_resolver" "search_tasks" {
   field       = "searchTasks"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "searchTasks",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
 resource "aws_appsync_resolver" "list_members" {
@@ -454,23 +483,8 @@ resource "aws_appsync_resolver" "list_members" {
   field       = "listMembers"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "listMembers",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
 resource "aws_appsync_resolver" "get_user" {
@@ -478,48 +492,18 @@ resource "aws_appsync_resolver" "get_user" {
   field       = "getUser"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "getUser",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
-# AppSync Resolvers for Mutations
+# Direct Lambda Resolvers (No VTL Templates) - Mutation Resolvers
 resource "aws_appsync_resolver" "create_team" {
   api_id      = aws_appsync_graphql_api.api.id
   field       = "createTeam"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "createTeam",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
 resource "aws_appsync_resolver" "add_member" {
@@ -527,23 +511,8 @@ resource "aws_appsync_resolver" "add_member" {
   field       = "addMember"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "addMember",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
 resource "aws_appsync_resolver" "create_task" {
@@ -551,23 +520,8 @@ resource "aws_appsync_resolver" "create_task" {
   field       = "createTask"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "createTask",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
 resource "aws_appsync_resolver" "update_task" {
@@ -575,23 +529,8 @@ resource "aws_appsync_resolver" "update_task" {
   field       = "updateTask"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "updateTask",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
 resource "aws_appsync_resolver" "update_task_details" {
@@ -599,23 +538,8 @@ resource "aws_appsync_resolver" "update_task_details" {
   field       = "updateTaskDetails"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "updateTaskDetails",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
 resource "aws_appsync_resolver" "delete_task" {
@@ -623,23 +547,8 @@ resource "aws_appsync_resolver" "delete_task" {
   field       = "deleteTask"
   type        = "Mutation"
   data_source = aws_appsync_datasource.lambda.name
-
-  request_template = <<EOF
-{
-  "version": "2017-02-28",
-  "operation": "Invoke",
-  "payload": {
-    "fieldName": "deleteTask",
-    "arguments": $util.toJson($context.arguments),
-    "identity": $util.toJson($context.identity),
-    "info": $util.toJson($context.info)
-  }
-}
-EOF
-
-  response_template = <<EOF
-$util.toJson($context.result)
-EOF
+  
+  kind = "UNIT"
 }
 
 # S3 Bucket for Frontend Hosting
@@ -698,7 +607,6 @@ resource "aws_s3_bucket_policy" "frontend_policy" {
   
   depends_on = [aws_s3_bucket_public_access_block.frontend]
 }
-
 
 # Outputs
 output "cognito_user_pool_id" {
