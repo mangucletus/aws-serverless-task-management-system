@@ -11,9 +11,9 @@
     "build": "npm run clean && npm run install-deps && npm run package"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.454.0",
-    "@aws-sdk/lib-dynamodb": "^3.454.0",
-    "@aws-sdk/client-sns": "^3.454.0",
+    "@aws-sdk/client-dynamodb": "^3.823.0",
+    "@aws-sdk/client-sns": "^3.823.0",
+    "@aws-sdk/lib-dynamodb": "^3.823.0",
     "uuid": "^9.0.1"
   },
   "engines": {

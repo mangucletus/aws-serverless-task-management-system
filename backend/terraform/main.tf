@@ -205,12 +205,37 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
   }
 }
 
-# Lambda function package - Updated for AWS SDK v3
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  source_dir  = "${path.module}/../lambda"
-  output_path = "${path.module}/../lambda/task_handler_deploy.zip"
-  excludes    = ["task_handler.zip", "*.zip", "node_modules"]
+# Lambda function package - Use pre-existing task_handler.zip
+# Note: Ensure that task_handler.zip includes all dependencies (node_modules) with 'uuid' installed.
+resource "aws_lambda_function" "task_handler" {
+  filename         = "${path.module}/../lambda/task_handler.zip"
+  function_name    = "TaskHandler"
+  role            = aws_iam_role.lambda_role.arn
+  handler         = "task_handler.handler"
+  runtime         = "nodejs18.x"
+  source_code_hash = filebase64sha256("${path.module}/../lambda/task_handler.zip")
+  timeout         = 30
+  memory_size     = 512
+  
+  environment {
+    variables = {
+      DYNAMODB_USERS_TABLE       = aws_dynamodb_table.users.name
+      DYNAMODB_TEAMS_TABLE       = aws_dynamodb_table.teams.name
+      DYNAMODB_MEMBERSHIPS_TABLE = aws_dynamodb_table.memberships.name
+      DYNAMODB_TASKS_TABLE       = aws_dynamodb_table.tasks.name
+      SNS_TOPIC_ARN             = aws_sns_topic.task_notifications.arn
+      AWS_NODEJS_CONNECTION_REUSE_ENABLED = "1"
+    }
+  }
+  
+  depends_on = [
+    aws_cloudwatch_log_group.lambda_logs,
+    aws_iam_role_policy.lambda_policy
+  ]
+  
+  tags = {
+    Name = "TaskManagement-Handler"
+  }
 }
 
 # IAM Role for Lambda with enhanced permissions
@@ -276,38 +301,6 @@ resource "aws_iam_role_policy" "lambda_policy" {
       }
     ]
   })
-}
-
-# Lambda Function - Updated for Node.js 18.x and AWS SDK v3
-resource "aws_lambda_function" "task_handler" {
-  filename         = fileexists("${path.module}/../lambda/task_handler.zip") ? "${path.module}/../lambda/task_handler.zip" : data.archive_file.lambda_zip.output_path
-  function_name    = "TaskHandler"
-  role            = aws_iam_role.lambda_role.arn
-  handler         = "task_handler.handler"
-  runtime         = "nodejs18.x"
-  source_code_hash = fileexists("${path.module}/../lambda/task_handler.zip") ? filebase64sha256("${path.module}/../lambda/task_handler.zip") : data.archive_file.lambda_zip.output_base64sha256
-  timeout         = 30
-  memory_size     = 512
-  
-  environment {
-    variables = {
-      DYNAMODB_USERS_TABLE       = aws_dynamodb_table.users.name
-      DYNAMODB_TEAMS_TABLE       = aws_dynamodb_table.teams.name
-      DYNAMODB_MEMBERSHIPS_TABLE = aws_dynamodb_table.memberships.name
-      DYNAMODB_TASKS_TABLE       = aws_dynamodb_table.tasks.name
-      SNS_TOPIC_ARN             = aws_sns_topic.task_notifications.arn
-      AWS_NODEJS_CONNECTION_REUSE_ENABLED = "1"
-    }
-  }
-  
-  depends_on = [
-    aws_cloudwatch_log_group.lambda_logs,
-    aws_iam_role_policy.lambda_policy
-  ]
-  
-  tags = {
-    Name = "TaskManagement-Handler"
-  }
 }
 
 # AppSync GraphQL API
