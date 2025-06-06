@@ -88,7 +88,6 @@ function Dashboard({ user }) {
         stack: err.stack
       });
       
-      // Enhanced error handling with specific cases
       let errorMessage = 'Failed to load teams. ';
       
       if (err.errors && err.errors.length > 0) {
@@ -100,9 +99,9 @@ function Dashboard({ user }) {
         } else if (firstError.errorType === 'ValidationError') {
           errorMessage += firstError.message;
         } else if (firstError.errorType === 'NotFoundError') {
-          errorMessage += 'No teams found. This is normal for new users.';
-          setTeams([]); // Ensure teams is empty but don't show error for new users
-          return; // Don't set error for this case
+          errorMessage = 'No teams found. This is normal for new users.';
+          setTeams([]);
+          return;
         } else {
           errorMessage += firstError.message || 'Unknown GraphQL error occurred.';
         }
@@ -121,7 +120,7 @@ function Dashboard({ user }) {
       }
       
       setError(errorMessage);
-      setTeams([]); // Ensure teams is empty on error
+      setTeams([]);
     } finally {
       setLoading(false);
     }
@@ -162,16 +161,13 @@ function Dashboard({ user }) {
         setTeamName('');
         setShowCreateForm(false);
         
-        // Add the new team to the local state immediately for better UX
         setTeams(prevTeams => [...prevTeams, newTeam]);
         
-        // Show success message
         setError('Team created successfully! 🎉 You can now manage it below.');
         setTimeout(() => {
           setError(null);
         }, 4000);
         
-        // Also refresh teams list to ensure consistency
         setTimeout(() => fetchTeams(), 1000);
       } else {
         throw new Error('Invalid response from server - no team data returned');
@@ -227,58 +223,10 @@ function Dashboard({ user }) {
     fetchTeams();
   }
 
-  // FIXED: Smart team selection for quick actions
-  function getTargetTeam(preferredRole = null) {
-    if (teams.length === 0) return null;
-    
-    // If a preferred role is specified, try to find a team with that role
-    if (preferredRole) {
-      const roleTeam = teams.find(team => team.userRole === preferredRole);
-      if (roleTeam) return roleTeam;
-    }
-    
-    // Fallback to any team (prefer admin teams, then first available)
-    const adminTeam = teams.find(team => team.userRole === 'admin');
-    return adminTeam || teams[0];
-  }
-
-  // FIXED: Enhanced navigation handlers with proper team selection
-  function handleRecentTeamsClick() {
-    const targetTeam = getTargetTeam();
-    if (targetTeam) {
-      console.log('Dashboard - Navigating to recent/first team:', targetTeam.teamId);
-      navigate(`/team/${targetTeam.teamId}`);
-    } else {
-      setError('No teams available. Please create a team first.');
-    }
-  }
-
-  function handleAllTasksClick() {
-    const targetTeam = getTargetTeam();
-    if (targetTeam) {
-      console.log('Dashboard - Navigating to tasks for team:', targetTeam.teamId);
-      navigate(`/tasks/${targetTeam.teamId}`);
-    } else {
-      setError('No teams available. Please create a team first to view tasks.');
-    }
-  }
-
-  function handleTeamManagementClick() {
-    // Prefer admin teams for management, but allow any team
-    const targetTeam = getTargetTeam('admin');
-    if (targetTeam) {
-      console.log('Dashboard - Navigating to team management:', targetTeam.teamId);
-      navigate(`/team/${targetTeam.teamId}`);
-    } else {
-      setError('No teams available for management. Please create a team first.');
-    }
-  }
-
   if (loading) {
     return <LoadingSpinner message="Loading your teams..." />;
   }
 
-  // FIXED: Better user display name handling with fallbacks
   const userDisplayName = user?.displayName || 
                          user?.email?.split('@')[0] || 
                          user?.username?.split('@')[0] ||
@@ -287,7 +235,6 @@ function Dashboard({ user }) {
 
   return (
     <div className="max-w-6xl mx-auto">  
-      {/* Header */}
       <div className="mb-8"> 
         <h1 className="text-3xl font-bold text-gray-900 mb-2"> 
           Welcome back, {userDisplayName}!
@@ -295,7 +242,6 @@ function Dashboard({ user }) {
         <p className="text-gray-600"> 
           Manage your teams and track project progress
         </p>
-        {/* Debug info in development */}
         {process.env.NODE_ENV === 'development' && (
           <div className="mt-2 p-2 bg-gray-100 rounded text-xs text-gray-600">
             <p><strong>Debug Info:</strong></p>
@@ -306,7 +252,6 @@ function Dashboard({ user }) {
         )}
       </div>
 
-      {/* Error Message */}
       {error && (
         <div className="mb-6"> 
           <ErrorMessage 
@@ -327,7 +272,6 @@ function Dashboard({ user }) {
         </div>
       )}
 
-      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"> 
         <StatsCard
           title="Total Teams"
@@ -335,14 +279,12 @@ function Dashboard({ user }) {
           icon={<TeamsIcon />}
           color="blue"
         />
-        
         <StatsCard
           title="Teams as Admin"
           value={stats.adminTeams}
           icon={<AdminIcon />}
           color="green"
         />
-        
         <StatsCard
           title="Teams as Member"
           value={stats.memberTeams}
@@ -351,7 +293,6 @@ function Dashboard({ user }) {
         />
       </div>
 
-      {/* Teams Section */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200"> 
         <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center"> 
           <h2 className="text-xl font-semibold text-gray-900">Your Teams</h2> 
@@ -366,7 +307,6 @@ function Dashboard({ user }) {
           </button>
         </div>
 
-        {/* Create Team Form */}
         {showCreateForm && (
           <CreateTeamForm
             teamName={teamName}
@@ -377,7 +317,6 @@ function Dashboard({ user }) {
           />
         )}
 
-        {/* Teams List */}
         <div className="p-6"> 
           {teams.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"> 
@@ -400,7 +339,6 @@ function Dashboard({ user }) {
         </div>
       </div>
 
-      {/* FIXED: Quick Actions with proper team handling */}
       {teams.length > 0 && (
         <div className="mt-8"> 
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3> 
@@ -409,34 +347,39 @@ function Dashboard({ user }) {
               title="Recent Teams"
               description="Access your recently active teams"
               icon={<RecentIcon />}
-              onClick={handleRecentTeamsClick}
-              disabled={teams.length === 0}
+              onClick={() => {
+                if (teams.length > 0) {
+                  const targetTeam = teams[0];
+                  console.log('Dashboard - Navigating to recent team:', targetTeam.teamId);
+                  navigate(`/team/${targetTeam.teamId}`);
+                }
+              }}
             />
-            
             <QuickActionCard
               title="All Tasks"
               description="View tasks across all teams"
               icon={<TasksIcon />}
-              onClick={handleAllTasksClick}
-              disabled={teams.length === 0}
+              onClick={() => {
+                if (teams.length > 0) {
+                  const targetTeam = teams[0];
+                  console.log('Dashboard - Navigating to tasks:', targetTeam.teamId);
+                  navigate(`/tasks/${targetTeam.teamId}`);
+                }
+              }}
             />
-            
             <QuickActionCard
               title="Team Management"
               description="Manage team settings and members"
               icon={<SettingsIcon />}
-              onClick={handleTeamManagementClick}
-              disabled={teams.length === 0}
+              onClick={() => {
+                if (teams.length > 0) {
+                  const adminTeam = teams.find(team => team.userRole === 'admin');
+                  const targetTeam = adminTeam || teams[0];
+                  console.log('Dashboard - Navigating to team management:', targetTeam.teamId);
+                  navigate(`/team/${targetTeam.teamId}`);
+                }
+              }}
             />
-          </div>
-          
-          {/* Help text for quick actions */}
-          <div className="mt-4 text-sm text-gray-500 text-center">
-            {teams.length === 1 ? (
-              `Quick actions will use your team: "${teams[0].name}"`
-            ) : (
-              `Quick actions will use ${teams.filter(t => t.userRole === 'admin').length > 0 ? 'your admin teams first, then ' : ''}the most appropriate team.`
-            )}
           </div>
         </div>
       )}
@@ -444,7 +387,6 @@ function Dashboard({ user }) {
   );
 }
 
-// Stats Card Component
 function StatsCard({ title, value, icon, color }) {
   const colorClasses = {
     blue: 'bg-blue-100 text-blue-600',
@@ -467,7 +409,6 @@ function StatsCard({ title, value, icon, color }) {
   );
 }
 
-// Create Team Form Component
 function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating }) {
   return (
     <div className="px-6 py-4 bg-gray-50 border-b border-gray-200"> 
@@ -512,7 +453,6 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating })
               </>
             )}
           </button>
-          
           <button
             type="button"
             onClick={onCancel}
@@ -527,7 +467,6 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating })
   );
 }
 
-// FIXED: Team Card Component with better navigation and user handling
 function TeamCard({ team, currentUser, onNavigate }) {
   const roleConfig = {
     admin: {
@@ -590,7 +529,6 @@ function TeamCard({ team, currentUser, onNavigate }) {
   );
 }
 
-// Enhanced Empty Teams State Component
 function EmptyTeamsState({ onCreateTeam, hasError, onRetry }) {
   if (hasError) {
     return (
@@ -639,22 +577,14 @@ function EmptyTeamsState({ onCreateTeam, hasError, onRetry }) {
   );
 }
 
-// FIXED: Quick Action Card Component with disabled state
-function QuickActionCard({ title, description, icon, onClick, disabled = false }) {
+function QuickActionCard({ title, description, icon, onClick }) {
   return (
     <button
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      className={`p-4 border border-gray-200 rounded-lg text-left transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-        disabled 
-          ? 'opacity-50 cursor-not-allowed bg-gray-50' 
-          : 'hover:border-gray-300 hover:shadow-sm bg-white'
-      }`}
+      onClick={onClick}
+      className="p-4 border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all text-left focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
     >
       <div className="flex items-center space-x-3"> 
-        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-          disabled ? 'bg-gray-200' : 'bg-gray-100'
-        }`}> 
+        <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center"> 
           {icon} 
         </div>
         <div>
@@ -666,7 +596,6 @@ function QuickActionCard({ title, description, icon, onClick, disabled = false }
   );
 }
 
-// Icon Components
 function TeamsIcon() {
   return (
     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"> 

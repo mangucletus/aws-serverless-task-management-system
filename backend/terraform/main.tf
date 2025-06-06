@@ -120,7 +120,6 @@ resource "aws_dynamodb_table" "users" {
     type = "S"
   }
   
-  # Add Global Secondary Index for email lookups
   attribute {
     name = "email"
     type = "S"
@@ -151,7 +150,6 @@ resource "aws_dynamodb_table" "teams" {
     type = "S"
   }
   
-  # Add Global Secondary Index for admin lookups
   attribute {
     name = "adminId"
     type = "S"
@@ -217,7 +215,6 @@ resource "aws_dynamodb_table" "tasks" {
     type = "S"
   }
   
-  # Add Global Secondary Index for assignee lookups
   attribute {
     name = "assignedTo"
     type = "S"
@@ -257,8 +254,7 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
   }
 }
 
-# Lambda function package - Use pre-existing task_handler.zip
-# Note: Ensure that task_handler.zip includes all dependencies (node_modules) with 'uuid' installed.
+# Lambda function package
 resource "aws_lambda_function" "task_handler" {
   filename         = "${path.module}/../lambda/task_handler.zip"
   function_name    = "TaskHandler"
@@ -277,6 +273,7 @@ resource "aws_lambda_function" "task_handler" {
       DYNAMODB_TASKS_TABLE       = aws_dynamodb_table.tasks.name
       SNS_TOPIC_ARN             = aws_sns_topic.task_notifications.arn
       AWS_NODEJS_CONNECTION_REUSE_ENABLED = "1"
+      COGNITO_USER_POOL_ID      = aws_cognito_user_pool.pool.id
     }
   }
   
@@ -290,7 +287,7 @@ resource "aws_lambda_function" "task_handler" {
   }
 }
 
-# IAM Role for Lambda with enhanced permissions
+# IAM Role for Lambda
 resource "aws_iam_role" "lambda_role" {
   name = "task-management-lambda-role"
   
@@ -306,7 +303,7 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
-# Enhanced IAM Policy for Lambda with AWS SDK v3 support
+# Enhanced IAM Policy for Lambda
 resource "aws_iam_role_policy" "lambda_policy" {
   role = aws_iam_role.lambda_role.id
   
@@ -353,6 +350,13 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "logs:PutLogEvents"
         ]
         Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cognito-idp:ListUsers"
+        ]
+        Resource = aws_cognito_user_pool.pool.arn
       }
     ]
   })
@@ -419,7 +423,7 @@ resource "aws_iam_role_policy" "appsync_lambda_policy" {
   })
 }
 
-# AppSync Data Source for Lambda (Using Direct Lambda Resolvers)
+# AppSync Data Source for Lambda
 resource "aws_appsync_datasource" "lambda" {
   api_id           = aws_appsync_graphql_api.api.id
   name             = "LambdaDataSource"
@@ -431,14 +435,13 @@ resource "aws_appsync_datasource" "lambda" {
   }
 }
 
-# Direct Lambda Resolvers (No VTL Templates) - Query Resolvers
+# Direct Lambda Resolvers - Query Resolvers
 resource "aws_appsync_resolver" "list_teams" {
   api_id      = aws_appsync_graphql_api.api.id
   field       = "listTeams"
   type        = "Query"
   data_source = aws_appsync_datasource.lambda.name
   
-  # Direct Lambda Resolver - no mapping templates needed
   kind = "UNIT"
 }
 
@@ -478,7 +481,7 @@ resource "aws_appsync_resolver" "get_user" {
   kind = "UNIT"
 }
 
-# Direct Lambda Resolvers (No VTL Templates) - Mutation Resolvers
+# Direct Lambda Resolvers - Mutation Resolvers
 resource "aws_appsync_resolver" "create_team" {
   api_id      = aws_appsync_graphql_api.api.id
   field       = "createTeam"
@@ -542,7 +545,6 @@ resource "aws_s3_bucket" "frontend" {
   }
 }
 
-# S3 Bucket versioning
 resource "aws_s3_bucket_versioning" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   versioning_configuration {
@@ -550,7 +552,6 @@ resource "aws_s3_bucket_versioning" "frontend" {
   }
 }
 
-# Disable Block Public Access for the S3 bucket
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket = aws_s3_bucket.frontend.id
 
@@ -560,7 +561,6 @@ resource "aws_s3_bucket_public_access_block" "frontend" {
   restrict_public_buckets = false
 }
 
-# S3 Bucket Website Configuration
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   
@@ -573,7 +573,6 @@ resource "aws_s3_bucket_website_configuration" "frontend" {
   }
 }
 
-# S3 Bucket Policy for public read access
 resource "aws_s3_bucket_policy" "frontend_policy" {
   bucket = aws_s3_bucket.frontend.id
   
