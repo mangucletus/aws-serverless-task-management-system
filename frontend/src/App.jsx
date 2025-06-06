@@ -47,6 +47,43 @@ function AuthenticatedApp({ user, signOut }) {
     loadUser();
   }, [user]);
 
+  // FIXED: Enhanced user ID normalization that matches backend priority exactly
+  function normalizeUserId(userData, fallbackUser) {
+    console.log('App - Normalizing user ID with data:', { userData, fallbackUser });
+    
+    // CRITICAL: Priority order MUST match backend normalizeUserId function exactly:
+    // 1. sub (most stable Cognito identifier) 
+    // 2. username
+    // 3. cognito:username  
+    // 4. email (from various sources)
+    // 5. custom:email
+    
+    const possibleIds = [
+      userData?.sub,                              // Primary: Cognito sub (UUID) - most stable
+      userData?.username,                         // Secondary: Cognito username
+      userData?.['cognito:username'],             // Tertiary: Alternative username field
+      userData?.signInDetails?.loginId,           // Quaternary: Email from sign-in details
+      userData?.attributes?.email,                // Quaternary: Email from attributes  
+      fallbackUser?.sub,                          // Fallback options from original user object
+      fallbackUser?.username,
+      fallbackUser?.['cognito:username'],
+      fallbackUser?.signInDetails?.loginId,
+      fallbackUser?.attributes?.email
+    ];
+    
+    for (let i = 0; i < possibleIds.length; i++) {
+      const id = possibleIds[i];
+      if (id && typeof id === 'string' && id.trim()) {
+        const normalizedId = id.trim();
+        console.log(`App - Selected user ID from position ${i}: ${normalizedId}`);
+        return normalizedId;
+      }
+    }
+    
+    console.error('App - No valid user ID found, using fallback');
+    return 'unknown-user';
+  }
+
   async function loadUser() {
     try {
       setIsLoading(true);
@@ -58,54 +95,78 @@ function AuthenticatedApp({ user, signOut }) {
       
       console.log('App - Enhanced user data from getCurrentUser:', userData);
       
-      // Create a comprehensive user object with consistent field mapping
+      // FIXED: Create a comprehensive user object with consistent field mapping
+      // The userId MUST match what the backend normalizeUserId function would return
+      const normalizedUserId = normalizeUserId(userData, user);
+      
       const enhancedUser = {
-        // Primary identifiers (ensure consistency)
-        userId: userData.username || userData.sub || user?.username,
-        username: userData.username || userData.sub || user?.username,
+        // CRITICAL: Primary identifier - must match backend normalization exactly
+        userId: normalizedUserId,
+        
+        // Additional identifiers for compatibility and debugging
+        username: userData.username || userData.sub || user?.username || normalizedUserId,
         sub: userData.sub || user?.sub,
         
-        // Email handling with fallbacks
+        // Email handling with robust fallbacks
         email: userData.signInDetails?.loginId || 
                userData.attributes?.email || 
                user?.signInDetails?.loginId || 
+               userData.username ||
                user?.username || 
                'unknown@example.com',
         
         // Display name derivation
-        displayName: (userData.signInDetails?.loginId || userData.username || user?.username || 'User')
-                    .split('@')[0],
+        displayName: (userData.signInDetails?.loginId || 
+                     userData.username || 
+                     user?.username || 
+                     'User').split('@')[0],
         
         // Additional attributes
         attributes: userData.attributes || {},
         signInDetails: userData.signInDetails || user?.signInDetails || {},
         
-        // Raw data for debugging
-        _raw: {
-          userData,
-          originalUser: user
+        // Debug information for troubleshooting
+        _debug: {
+          backendUserIdWouldBe: normalizedUserId,
+          selectedFromPosition: 'see console logs',
+          availableIds: {
+            sub: userData?.sub,
+            username: userData?.username,
+            'cognito:username': userData?.['cognito:username'], 
+            loginId: userData?.signInDetails?.loginId,
+            email: userData?.attributes?.email,
+            fallbackSub: user?.sub,
+            fallbackUsername: user?.username
+          },
+          timestamp: new Date().toISOString()
         }
       };
       
       console.log('App - Final enhanced user object:', enhancedUser);
+      console.log('App - User ID that will be sent to backend:', enhancedUser.userId);
+      console.log('App - This should match backend normalizeUserId output');
+      
       setCurrentUser(enhancedUser);
       
     } catch (error) {
       console.error('App - Error loading user:', error);
       
       // Create fallback user object from available data
+      const normalizedUserId = normalizeUserId({}, user);
+      
       const fallbackUser = {
-        userId: user?.username || user?.sub || 'unknown',
-        username: user?.username || user?.sub || 'unknown',
+        userId: normalizedUserId,
+        username: user?.username || user?.sub || normalizedUserId,
         sub: user?.sub || 'unknown',
         email: user?.signInDetails?.loginId || user?.username || 'unknown@example.com',
         displayName: (user?.username || 'User').split('@')[0],
         attributes: {},
         signInDetails: user?.signInDetails || {},
         _isFallback: true,
-        _raw: {
-          originalUser: user,
-          error: error.message
+        _debug: {
+          error: error.message,
+          fallbackUserId: normalizedUserId,
+          timestamp: new Date().toISOString()
         }
       };
       

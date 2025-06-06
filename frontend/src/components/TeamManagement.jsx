@@ -20,8 +20,14 @@ function TeamManagement({ user }) {
   const [teamExists, setTeamExists] = useState(true);
 
   useEffect(() => {
-    fetchMembers();
-  }, [teamId]);
+    if (teamId && user?.userId) {
+      fetchMembers();
+    } else {
+      console.error('TeamManagement - Missing teamId or user.userId:', { teamId, userId: user?.userId });
+      setError('Invalid team or user information. Please refresh the page.');
+      setLoading(false);
+    }
+  }, [teamId, user]);
 
   async function fetchMembers() {
     try {
@@ -30,6 +36,7 @@ function TeamManagement({ user }) {
       setTeamExists(true);
 
       console.log('TeamManagement - Fetching members for team:', teamId, 'user:', user?.userId);
+      console.log('TeamManagement - Full user object:', user);
 
       const response = await client.graphql({
         query: listMembers,
@@ -48,18 +55,40 @@ function TeamManagement({ user }) {
       const membersList = response.data.listMembers;
       setMembers(membersList);
 
-      // Find current user's role
+      console.log('TeamManagement - Members list:', membersList);
+      console.log('TeamManagement - Looking for user ID:', user?.userId);
+
+      // FIXED: Find current user's role with robust user ID matching
       const currentUserMembership = membersList.find(
         member => {
           const memberUserId = member.userId;
-          const currentUserId = user?.userId || user?.username || user?.email;
-          return memberUserId === currentUserId;
+          
+          // Try multiple possible user identifiers to ensure match
+          const possibleUserIds = [
+            user?.userId,           // Primary: normalized user ID from App.jsx
+            user?.sub,              // Cognito sub
+            user?.username,         // Cognito username  
+            user?.email,            // Email as fallback
+            user?.signInDetails?.loginId  // Login ID
+          ].filter(Boolean); // Remove undefined/null values
+          
+          const isMatch = possibleUserIds.some(possibleId => 
+            possibleId === memberUserId
+          );
+          
+          console.log('TeamManagement - Checking member:', memberUserId, 'against user IDs:', possibleUserIds, 'match:', isMatch);
+          
+          return isMatch;
         }
       );
 
+      console.log('TeamManagement - Current user membership:', currentUserMembership);
+
       if (currentUserMembership) {
         setUserRole(currentUserMembership.role);
+        console.log('TeamManagement - User role set to:', currentUserMembership.role);
       } else {
+        console.log('TeamManagement - User not found in members list');
         setTeamExists(false);
         setError('You are not a member of this team.');
       }
@@ -71,6 +100,8 @@ function TeamManagement({ user }) {
       
       if (err.errors && err.errors.length > 0) {
         const firstError = err.errors[0];
+        console.error('TeamManagement - GraphQL error details:', firstError);
+        
         if (firstError.errorType === 'AuthorizationError') {
           errorMessage = 'You do not have permission to view this team.';
           setTeamExists(false);
@@ -122,6 +153,13 @@ function TeamManagement({ user }) {
       if (response.data?.addMember) {
         setMemberEmail('');
         setShowAddForm(false);
+        
+        // Show success message
+        setError('Member added successfully! 🎉');
+        setTimeout(() => {
+          setError(null);
+        }, 3000);
+        
         await fetchMembers(); // Refresh members list
       } else {
         throw new Error('Invalid response from server');
@@ -175,6 +213,15 @@ function TeamManagement({ user }) {
           <p className="text-gray-600 mb-4">
             The team you're looking for doesn't exist or you don't have access to it.
           </p>
+          {/* Debug info in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="text-xs text-gray-400 mb-4 max-w-md mx-auto">
+              <p>Debug Info:</p>
+              <p>Team ID: {teamId}</p>
+              <p>User ID: {user?.userId}</p>
+              <p>User Object: {JSON.stringify(user, null, 2)}</p>
+            </div>
+          )}
           <div className="flex justify-center space-x-3">
             <button
               onClick={handleRetry}
@@ -217,6 +264,12 @@ function TeamManagement({ user }) {
             </span>
           )}
         </p>
+        {/* Debug info in development */}
+        {process.env.NODE_ENV === 'development' && (
+          <p className="text-xs text-gray-400 mt-2">
+            Debug: Team ID = {teamId}, User ID = {user?.userId}, Role = {userRole}
+          </p>
+        )}
       </div>
 
       {/* Error Message */}
@@ -225,6 +278,7 @@ function TeamManagement({ user }) {
           <ErrorMessage 
             message={error}
             onDismiss={() => setError(null)}
+            type={error.includes('successfully') || error.includes('🎉') ? 'success' : 'error'}
           />
           {error.includes('Failed to load') && (
             <div className="mt-3">
@@ -370,55 +424,12 @@ function TeamManagement({ user }) {
           {members.length > 0 ? (
             <div className="space-y-4">
               {members.map((member) => (
-                <div
+                <MemberCard
                   key={`${member.teamId}-${member.userId}`}
-                  className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-center space-x-4">
-                    <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
-                      <span className="text-white font-bold text-lg">
-                        {member.userId.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-gray-900">{member.userId}</h3>
-                      <p className="text-sm text-gray-500">
-                        Joined {member.joinedAt ? new Date(member.joinedAt).toLocaleDateString() : 'Recently'}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center space-x-3">
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      member.role === 'admin' 
-                        ? 'bg-red-100 text-red-800' 
-                        : 'bg-blue-100 text-blue-800'
-                    }`}>
-                      {member.role === 'admin' ? '👑 Admin' : '👤 Member'}
-                    </span>
-                    
-                    {userRole === 'admin' && member.role !== 'admin' && (
-                      <div className="flex space-x-2">
-                        <button 
-                          className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Edit Member"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                        </button>
-                        <button 
-                          className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Remove Member"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  member={member}
+                  currentUser={user}
+                  userRole={userRole}
+                />
               ))}
             </div>
           ) : (
@@ -484,6 +495,74 @@ function TeamManagement({ user }) {
               </div>
             </div>
           </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// FIXED: Member Card Component with better user identification
+function MemberCard({ member, currentUser, userRole }) {
+  // Check if this member is the current user
+  const isCurrentUser = [
+    currentUser?.userId,
+    currentUser?.sub,
+    currentUser?.username,
+    currentUser?.email,
+    currentUser?.signInDetails?.loginId
+  ].filter(Boolean).some(id => id === member.userId);
+
+  return (
+    <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+      <div className="flex items-center space-x-4">
+        <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
+          <span className="text-white font-bold text-lg">
+            {member.userId.charAt(0).toUpperCase()}
+          </span>
+        </div>
+        <div>
+          <div className="flex items-center space-x-2">
+            <h3 className="font-semibold text-gray-900">{member.userId}</h3>
+            {isCurrentUser && (
+              <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                You
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-500">
+            Joined {member.joinedAt ? new Date(member.joinedAt).toLocaleDateString() : 'Recently'}
+          </p>
+        </div>
+      </div>
+      
+      <div className="flex items-center space-x-3">
+        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+          member.role === 'admin' 
+            ? 'bg-red-100 text-red-800' 
+            : 'bg-blue-100 text-blue-800'
+        }`}>
+          {member.role === 'admin' ? '👑 Admin' : '👤 Member'}
+        </span>
+        
+        {userRole === 'admin' && member.role !== 'admin' && !isCurrentUser && (
+          <div className="flex space-x-2">
+            <button 
+              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+              title="Edit Member"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </button>
+            <button 
+              className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              title="Remove Member"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          </div>
         )}
       </div>
     </div>

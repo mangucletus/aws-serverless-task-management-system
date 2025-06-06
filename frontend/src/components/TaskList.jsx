@@ -36,8 +36,14 @@ function TaskList({ user }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetchUserRoleAndTasks();
-  }, [teamId]);
+    if (teamId && user?.userId) {
+      fetchUserRoleAndTasks();
+    } else {
+      console.error('TaskList - Missing teamId or user.userId:', { teamId, userId: user?.userId });
+      setError('Invalid team or user information. Please refresh the page.');
+      setLoading(false);
+    }
+  }, [teamId, user]);
 
   async function fetchUserRoleAndTasks() {
     try {
@@ -46,6 +52,7 @@ function TaskList({ user }) {
       setTeamExists(true);
 
       console.log('TaskList - Fetching data for user:', user?.userId, 'team:', teamId);
+      console.log('TaskList - Full user object for debugging:', user);
 
       // First, try to get team members to verify team exists and get user role
       const membersResponse = await client.graphql({
@@ -62,20 +69,50 @@ function TaskList({ user }) {
         return;
       }
 
-      // Find current user's membership
+      // FIXED: Enhanced user membership detection with multiple ID matching
       const currentUserMembership = membersResponse.data.listMembers.find(
         member => {
           const memberUserId = member.userId;
-          const currentUserId = user?.userId || user?.username || user?.email;
-          return memberUserId === currentUserId;
+          
+          // Create array of all possible user identifiers to check against
+          const possibleUserIds = [
+            user?.userId,           // Primary: normalized user ID from App.jsx
+            user?.sub,              // Cognito sub (UUID)
+            user?.username,         // Cognito username  
+            user?.email,            // Email as fallback
+            user?.signInDetails?.loginId,  // Login ID from sign-in
+            user?.attributes?.email // Email from attributes
+          ].filter(Boolean); // Remove undefined/null values
+          
+          const isMatch = possibleUserIds.some(possibleId => 
+            possibleId === memberUserId
+          );
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.log('TaskList - Checking member:', memberUserId, 'against user IDs:', possibleUserIds, 'match:', isMatch);
+          }
+          
+          return isMatch;
         }
       );
       
-      console.log('TaskList - Current user membership:', currentUserMembership);
+      console.log('TaskList - Current user membership found:', !!currentUserMembership);
+      console.log('TaskList - Membership details:', currentUserMembership);
 
       if (currentUserMembership) {
         setUserRole(currentUserMembership.role);
+        console.log('TaskList - User role set to:', currentUserMembership.role);
       } else {
+        console.log('TaskList - User not found in members list');
+        console.log('TaskList - Available members:', membersResponse.data.listMembers.map(m => m.userId));
+        console.log('TaskList - Current user identifiers:', {
+          userId: user?.userId,
+          sub: user?.sub,
+          username: user?.username,
+          email: user?.email,
+          loginId: user?.signInDetails?.loginId
+        });
+        
         setTeamExists(false);
         setError('You are not a member of this team.');
         return;
@@ -86,11 +123,18 @@ function TaskList({ user }) {
       
     } catch (err) {
       console.error('TaskList - Fetch user role and tasks error:', err);
+      console.error('TaskList - Error details:', {
+        message: err.message,
+        errors: err.errors,
+        stack: err.stack
+      });
       
       let errorMessage = 'Failed to load team information. ';
       
       if (err.errors && err.errors.length > 0) {
         const firstError = err.errors[0];
+        console.error('TaskList - First GraphQL error:', firstError);
+        
         if (firstError.errorType === 'AuthorizationError') {
           errorMessage = 'You do not have permission to view this team.';
           setTeamExists(false);
@@ -103,6 +147,8 @@ function TaskList({ user }) {
       } else if (err.message) {
         if (err.message.includes('NetworkError')) {
           errorMessage += 'Network connection issue. Please check your internet connection.';
+        } else if (err.message.includes('Authentication') || err.message.includes('Unauthorized')) {
+          errorMessage += 'Authentication issue. Please sign out and back in.';
         } else {
           errorMessage += err.message;
         }
@@ -129,8 +175,11 @@ function TaskList({ user }) {
       console.log('TaskList - Tasks response:', response);
       
       if (response.data?.listTasks) {
-        setTasks(response.data.listTasks);
+        const tasksData = response.data.listTasks;
+        console.log('TaskList - Tasks data received:', tasksData.length, 'tasks');
+        setTasks(tasksData);
       } else {
+        console.log('TaskList - No tasks data in response');
         setTasks([]);
       }
     } catch (err) {
@@ -138,7 +187,8 @@ function TaskList({ user }) {
       
       let errorMessage = 'Failed to load tasks. ';
       if (err.errors && err.errors.length > 0) {
-        errorMessage += err.errors[0].message || 'Please try again.';
+        const firstError = err.errors[0];
+        errorMessage += firstError.message || 'Please try again.';
       } else {
         errorMessage += err.message || 'Please try again.';
       }
@@ -158,6 +208,8 @@ function TaskList({ user }) {
       setLoading(true);
       setError(null);
       
+      console.log('TaskList - Searching tasks with query:', searchTerm.trim());
+      
       // Fixed: Use 'query' parameter instead of 'searchTerm' to match backend
       const response = await client.graphql({
         query: searchTasks,
@@ -165,6 +217,7 @@ function TaskList({ user }) {
         authMode: 'userPool'
       });
       
+      console.log('TaskList - Search response:', response);
       setTasks(response.data.searchTasks || []);
     } catch (err) {
       console.error('TaskList - Search tasks error:', err);
@@ -179,16 +232,25 @@ function TaskList({ user }) {
       setUpdating(prev => ({ ...prev, [taskId]: true }));
       setError(null);
       
+      console.log('TaskList - Updating task status:', { teamId, taskId, status });
+      
       await client.graphql({
         query: updateTask,
         variables: { teamId, taskId, status },
         authMode: 'userPool'
       });
       
-      await fetchTasks();
+      console.log('TaskList - Task status updated successfully');
+      await fetchTasks(); // Refresh task list
     } catch (err) {
       console.error('TaskList - Update task error:', err);
-      setError(`Failed to update task: ${err.message || 'Unknown error'}`);
+      let errorMessage = 'Failed to update task: ';
+      if (err.errors && err.errors.length > 0) {
+        errorMessage += err.errors[0].message || 'Unknown error';
+      } else {
+        errorMessage += err.message || 'Unknown error';
+      }
+      setError(errorMessage);
     } finally {
       setUpdating(prev => ({ ...prev, [taskId]: false }));
     }
@@ -203,25 +265,51 @@ function TaskList({ user }) {
       setDeleting(prev => ({ ...prev, [taskId]: true }));
       setError(null);
       
+      console.log('TaskList - Deleting task:', { teamId, taskId });
+      
       await client.graphql({
         query: deleteTask,
         variables: { teamId, taskId },
         authMode: 'userPool'
       });
       
-      await fetchTasks();
+      console.log('TaskList - Task deleted successfully');
+      await fetchTasks(); // Refresh task list
     } catch (err) {
       console.error('TaskList - Delete task error:', err);
-      setError(`Failed to delete task: ${err.message || 'Unknown error'}`);
+      let errorMessage = 'Failed to delete task: ';
+      if (err.errors && err.errors.length > 0) {
+        errorMessage += err.errors[0].message || 'Unknown error';
+      } else {
+        errorMessage += err.message || 'Unknown error';
+      }
+      setError(errorMessage);
     } finally {
       setDeleting(prev => ({ ...prev, [taskId]: false }));
     }
   }
 
+  // FIXED: Enhanced task filtering and sorting with robust user ID matching
   const filteredAndSortedTasks = useMemo(() => {
     let filtered = tasks.filter(task => {
       if (filter === 'my-tasks') {
-        return task.assignedTo === user?.username || task.assignedTo === user?.email || task.assignedTo === user?.userId;
+        // FIXED: Check if task is assigned to current user using multiple possible IDs
+        const possibleUserIds = [
+          user?.userId,
+          user?.sub,
+          user?.username,
+          user?.email,
+          user?.signInDetails?.loginId,
+          user?.attributes?.email
+        ].filter(Boolean);
+        
+        const isAssignedToUser = possibleUserIds.some(id => id === task.assignedTo);
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.log('TaskList - Checking if task', task.taskId, 'assigned to user. Task assignedTo:', task.assignedTo, 'User IDs:', possibleUserIds, 'Match:', isAssignedToUser);
+        }
+        
+        return isAssignedToUser;
       }
       if (filter !== 'all') {
         return task.status === filter;
@@ -229,6 +317,7 @@ function TaskList({ user }) {
       return true;
     });
 
+    // Sort the filtered tasks
     filtered.sort((a, b) => {
       let comparison = 0;
       
@@ -260,11 +349,25 @@ function TaskList({ user }) {
     return filtered;
   }, [tasks, filter, sortBy, sortOrder, user]);
 
+  // FIXED: Enhanced task counting with robust user ID matching
   const taskCounts = useMemo(() => {
+    const possibleUserIds = [
+      user?.userId,
+      user?.sub,
+      user?.username,
+      user?.email,
+      user?.signInDetails?.loginId,
+      user?.attributes?.email
+    ].filter(Boolean);
+    
     const userTasks = tasks.filter(t => 
-      t.assignedTo === user?.username || 
-      t.assignedTo === user?.email || 
-      t.assignedTo === user?.userId
+      possibleUserIds.some(id => id === t.assignedTo)
+    );
+    
+    const overdueTasks = tasks.filter(t => 
+      t.deadline && 
+      new Date(t.deadline) < new Date() && 
+      t.status !== 'Completed'
     );
     
     return {
@@ -273,7 +376,7 @@ function TaskList({ user }) {
       inProgress: tasks.filter(t => t.status === 'In Progress').length,
       completed: tasks.filter(t => t.status === 'Completed').length,
       myTasks: userTasks.length,
-      overdue: tasks.filter(t => t.deadline && new Date(t.deadline) < new Date() && t.status !== 'Completed').length
+      overdue: overdueTasks.length
     };
   }, [tasks, user]);
 
@@ -299,6 +402,16 @@ function TaskList({ user }) {
           <p className="text-gray-600 mb-4">
             The team you're looking for doesn't exist or you don't have access to it.
           </p>
+          {/* Debug info in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="text-xs text-gray-400 mb-4 max-w-md mx-auto p-2 bg-gray-100 rounded">
+              <p><strong>Debug Info:</strong></p>
+              <p>Team ID: {teamId}</p>
+              <p>User ID: {user?.userId}</p>
+              <p>User Email: {user?.email}</p>
+              <p>User Sub: {user?.sub}</p>
+            </div>
+          )}
           <div className="flex justify-center space-x-3">
             <button
               onClick={handleRetry}
@@ -342,6 +455,13 @@ function TaskList({ user }) {
               </span>
             )}
           </p>
+          {/* Debug info in development */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="text-xs text-gray-400 mt-1 p-2 bg-gray-100 rounded">
+              <p><strong>Debug:</strong> Team ID = {teamId}, User ID = {user?.userId}, Role = {userRole}</p>
+              <p>Total Tasks: {tasks.length}, My Tasks: {taskCounts.myTasks}</p>
+            </div>
+          )}
         </div>
         {userRole === 'admin' && (
           <Link
@@ -556,9 +676,19 @@ function StatsCard({ title, value, icon, isActive, onClick, danger = false }) {
   );
 }
 
-// Task Card Component
+// FIXED: Enhanced Task Card Component with better user identification
 function TaskCard({ task, user, userRole, updating, deleting, onUpdateStatus, onDelete }) {
-  const isAssigned = task.assignedTo === user?.username || task.assignedTo === user?.email || task.assignedTo === user?.userId;
+  // FIXED: Check if task is assigned to current user using multiple possible IDs
+  const possibleUserIds = [
+    user?.userId,
+    user?.sub,
+    user?.username,
+    user?.email,
+    user?.signInDetails?.loginId,
+    user?.attributes?.email
+  ].filter(Boolean);
+  
+  const isAssigned = possibleUserIds.some(id => id === task.assignedTo);
   const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'Completed';
   const canUpdateStatus = isAssigned || userRole === 'admin';
   const canDelete = userRole === 'admin';

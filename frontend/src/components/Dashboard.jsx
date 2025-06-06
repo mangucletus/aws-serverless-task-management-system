@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { generateClient } from 'aws-amplify/api';
-import { getCurrentUser } from 'aws-amplify/auth';
 import { listTeams } from '../graphql/queries';
 import { createTeam } from '../graphql/mutations';
 import LoadingSpinner from './LoadingSpinner';
@@ -16,7 +15,6 @@ function Dashboard({ user }) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [teamName, setTeamName] = useState('');
   const [error, setError] = useState(null);
-  const [currentUser, setCurrentUser] = useState(null);
   const [stats, setStats] = useState({
     totalTeams: 0,
     adminTeams: 0,
@@ -25,14 +23,15 @@ function Dashboard({ user }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    loadCurrentUser();
-  }, [user]);
-
-  useEffect(() => {
-    if (currentUser) {
+    if (user?.userId) {
+      console.log('Dashboard - User available, fetching teams:', user.userId);
       fetchTeams();
+    } else {
+      console.error('Dashboard - No user ID available:', user);
+      setError('User authentication issue. Please refresh the page or sign out and back in.');
+      setLoading(false);
     }
-  }, [currentUser]);
+  }, [user]);
 
   useEffect(() => {
     if (teams.length > 0) {
@@ -53,42 +52,13 @@ function Dashboard({ user }) {
     }
   }, [teams]);
 
-  async function loadCurrentUser() {
-    try {
-      const userData = await getCurrentUser();
-      console.log('Dashboard - Current user data:', userData);
-      
-      // Create comprehensive user object
-      const enhancedUser = {
-        ...userData,
-        email: userData.signInDetails?.loginId || userData.username || 'unknown@example.com',
-        userId: userData.username || userData.sub,
-        username: userData.username || userData.sub
-      };
-      
-      console.log('Dashboard - Enhanced user:', enhancedUser);
-      setCurrentUser(enhancedUser);
-    } catch (error) {
-      console.error('Error loading current user:', error);
-      
-      // Create fallback user from prop
-      const fallbackUser = {
-        email: user?.signInDetails?.loginId || user?.username || 'unknown@example.com',
-        userId: user?.username || user?.sub || 'unknown',
-        username: user?.username || user?.sub || 'unknown'
-      };
-      
-      console.log('Dashboard - Using fallback user:', fallbackUser);
-      setCurrentUser(fallbackUser);
-    }
-  }
-
   async function fetchTeams() {
     try {
       setLoading(true);
       setError(null);
       
-      console.log('Dashboard - Fetching teams for user:', currentUser?.userId);
+      console.log('Dashboard - Fetching teams for user:', user?.userId);
+      console.log('Dashboard - Full user object for debugging:', user);
       
       const response = await client.graphql({
         query: listTeams,
@@ -98,32 +68,51 @@ function Dashboard({ user }) {
       console.log('Dashboard - Teams response:', response);
       
       if (response.data && response.data.listTeams) {
-        setTeams(response.data.listTeams);
+        const teamsData = response.data.listTeams;
+        console.log('Dashboard - Teams data received:', teamsData);
+        setTeams(teamsData);
+        
+        if (teamsData.length === 0) {
+          console.log('Dashboard - No teams found for user. This might be expected for new users.');
+        }
       } else {
-        console.log('Dashboard - No teams data in response');
+        console.log('Dashboard - No teams data in response structure');
         setTeams([]);
       }
       
     } catch (err) {
       console.error('Dashboard - Fetch teams error:', err);
+      console.error('Dashboard - Error details:', {
+        message: err.message,
+        errors: err.errors,
+        stack: err.stack
+      });
       
-      // Enhanced error handling
+      // Enhanced error handling with specific cases
       let errorMessage = 'Failed to load teams. ';
       
       if (err.errors && err.errors.length > 0) {
         const firstError = err.errors[0];
+        console.error('Dashboard - First GraphQL error:', firstError);
+        
         if (firstError.errorType === 'AuthorizationError') {
-          errorMessage += 'Please check your permissions or try signing in again.';
+          errorMessage += 'Authentication issue detected. Please try signing out and back in.';
         } else if (firstError.errorType === 'ValidationError') {
           errorMessage += firstError.message;
+        } else if (firstError.errorType === 'NotFoundError') {
+          errorMessage += 'No teams found. This is normal for new users.';
+          setTeams([]); // Ensure teams is empty but don't show error for new users
+          return; // Don't set error for this case
         } else {
-          errorMessage += firstError.message || 'Please try again later.';
+          errorMessage += firstError.message || 'Unknown GraphQL error occurred.';
         }
       } else if (err.message) {
         if (err.message.includes('NetworkError') || err.message.includes('fetch')) {
-          errorMessage += 'Network connection issue. Please check your internet connection.';
+          errorMessage += 'Network connection issue. Please check your internet connection and try again.';
         } else if (err.message.includes('GraphQL')) {
           errorMessage += 'Service temporarily unavailable. Please try again in a moment.';
+        } else if (err.message.includes('Authentication') || err.message.includes('Unauthorized')) {
+          errorMessage += 'Authentication expired. Please sign out and back in.';
         } else {
           errorMessage += err.message;
         }
@@ -156,7 +145,7 @@ function Dashboard({ user }) {
       setError(null);
       
       console.log('Dashboard - Creating team with name:', teamName.trim());
-      console.log('Dashboard - Current user for team creation:', currentUser);
+      console.log('Dashboard - Current user for team creation:', user);
       
       const response = await client.graphql({
         query: createTeam,
@@ -167,35 +156,53 @@ function Dashboard({ user }) {
       console.log('Dashboard - Create team response:', response);
       
       if (response.data && response.data.createTeam) {
+        const newTeam = response.data.createTeam;
+        console.log('Dashboard - Team created successfully:', newTeam);
+        
         setTeamName('');
         setShowCreateForm(false);
-        await fetchTeams(); // Refresh teams list
         
-        // Show success message briefly
+        // Add the new team to the local state immediately for better UX
+        setTeams(prevTeams => [...prevTeams, newTeam]);
+        
+        // Show success message
+        setError('Team created successfully! 🎉 You can now manage it below.');
         setTimeout(() => {
           setError(null);
-        }, 3000);
+        }, 4000);
+        
+        // Also refresh teams list to ensure consistency
+        setTimeout(() => fetchTeams(), 1000);
       } else {
-        throw new Error('Invalid response from server');
+        throw new Error('Invalid response from server - no team data returned');
       }
       
     } catch (err) {
       console.error('Dashboard - Create team error:', err);
+      console.error('Dashboard - Create team error details:', {
+        message: err.message,
+        errors: err.errors,
+        stack: err.stack
+      });
       
       let errorMessage = 'Failed to create team. ';
       
       if (err.errors && err.errors.length > 0) {
         const firstError = err.errors[0];
+        console.error('Dashboard - First create team error:', firstError);
+        
         if (firstError.errorType === 'ValidationError') {
           errorMessage = firstError.message;
         } else if (firstError.errorType === 'AuthorizationError') {
-          errorMessage += 'You do not have permission to create teams.';
+          errorMessage += 'You do not have permission to create teams. Please check your account status.';
         } else {
-          errorMessage += firstError.message || 'Please try again.';
+          errorMessage += firstError.message || 'Unknown error from server.';
         }
       } else if (err.message) {
-        if (err.message.includes('Cannot find module')) {
+        if (err.message.includes('Cannot find module') || err.message.includes('Lambda')) {
           errorMessage += 'Server configuration issue. Please contact support.';
+        } else if (err.message.includes('Network')) {
+          errorMessage += 'Network issue. Please check your connection and try again.';
         } else {
           errorMessage += err.message;
         }
@@ -224,7 +231,12 @@ function Dashboard({ user }) {
     return <LoadingSpinner message="Loading your teams..." />;
   }
 
-  const userDisplayName = currentUser?.email?.split('@')[0] || currentUser?.username || 'User';
+  // FIXED: Better user display name handling with fallbacks
+  const userDisplayName = user?.displayName || 
+                         user?.email?.split('@')[0] || 
+                         user?.username?.split('@')[0] ||
+                         user?.signInDetails?.loginId?.split('@')[0] ||
+                         'User';
 
   return (
     <div className="max-w-6xl mx-auto">  
@@ -236,6 +248,15 @@ function Dashboard({ user }) {
         <p className="text-gray-600"> 
           Manage your teams and track project progress
         </p>
+        {/* Debug info in development */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="mt-2 p-2 bg-gray-100 rounded text-xs text-gray-600">
+            <p><strong>Debug Info:</strong></p>
+            <p>User ID: {user?.userId || 'undefined'}</p>
+            <p>Display Name Source: {user?.displayName ? 'displayName' : user?.email ? 'email' : user?.username ? 'username' : 'fallback'}</p>
+            <p>Teams Count: {teams.length}</p>
+          </div>
+        )}
       </div>
 
       {/* Error Message */}
@@ -244,13 +265,13 @@ function Dashboard({ user }) {
           <ErrorMessage 
             message={error}
             onDismiss={() => setError(null)}
-            type={error.includes('Successfully') ? 'success' : 'error'}
+            type={error.includes('successfully') || error.includes('🎉') ? 'success' : 'error'}
           />
-          {error.includes('Failed to load teams') && (
+          {error.includes('Failed to load teams') && !error.includes('successfully') && (
             <div className="mt-3">
               <button
                 onClick={handleRetryFetch}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
               >
                 Try Again
               </button>
@@ -317,7 +338,7 @@ function Dashboard({ user }) {
                 <TeamCard
                   key={team.teamId}
                   team={team}
-                  currentUser={currentUser}
+                  currentUser={user}
                   onNavigate={navigate}
                 />
               ))}
@@ -325,7 +346,7 @@ function Dashboard({ user }) {
           ) : (
             <EmptyTeamsState
               onCreateTeam={() => setShowCreateForm(true)}
-              hasError={!!error}
+              hasError={!!error && !error.includes('successfully')}
               onRetry={handleRetryFetch}
             />
           )}
@@ -343,7 +364,9 @@ function Dashboard({ user }) {
               icon={<RecentIcon />}
               onClick={() => {
                 if (teams.length > 0) {
-                  navigate(`/team/${teams[0].teamId}`);
+                  const targetTeam = teams[0];
+                  console.log('Dashboard - Navigating to recent team:', targetTeam.teamId);
+                  navigate(`/team/${targetTeam.teamId}`);
                 }
               }}
             />
@@ -354,7 +377,9 @@ function Dashboard({ user }) {
               icon={<TasksIcon />}
               onClick={() => {
                 if (teams.length > 0) {
-                  navigate(`/tasks/${teams[0].teamId}`);
+                  const targetTeam = teams[0];
+                  console.log('Dashboard - Navigating to tasks:', targetTeam.teamId);
+                  navigate(`/tasks/${targetTeam.teamId}`);
                 }
               }}
             />
@@ -365,12 +390,11 @@ function Dashboard({ user }) {
               icon={<SettingsIcon />}
               onClick={() => {
                 if (teams.length > 0) {
+                  // Prefer admin teams for management
                   const adminTeam = teams.find(team => team.userRole === 'admin');
-                  if (adminTeam) {
-                    navigate(`/team/${adminTeam.teamId}`);
-                  } else {
-                    navigate(`/team/${teams[0].teamId}`);
-                  }
+                  const targetTeam = adminTeam || teams[0];
+                  console.log('Dashboard - Navigating to team management:', targetTeam.teamId);
+                  navigate(`/team/${targetTeam.teamId}`);
                 }
               }}
             />
@@ -425,7 +449,7 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating })
             required
           />
           <p className="text-xs text-gray-500 mt-1"> 
-            {teamName.length}/100 
+            {teamName.length}/100 characters
           </p>
         </div>
         
@@ -433,7 +457,7 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating })
           <button
             type="submit"
             disabled={creating || !teamName.trim()}
-            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2"
+            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center space-x-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
           >
             {creating ? (
               <>
@@ -454,7 +478,7 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating })
             type="button"
             onClick={onCancel}
             disabled={creating}
-            className="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            className="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
           >
             Cancel
           </button>
@@ -464,7 +488,7 @@ function CreateTeamForm({ teamName, setTeamName, onSubmit, onCancel, creating })
   );
 }
 
-// Team Card Component
+// FIXED: Team Card Component with better navigation and user handling
 function TeamCard({ team, currentUser, onNavigate }) {
   const roleConfig = {
     admin: {
@@ -480,6 +504,11 @@ function TeamCard({ team, currentUser, onNavigate }) {
   };
 
   const config = roleConfig[team.userRole] || roleConfig.member;
+
+  const handleNavigate = (path) => {
+    console.log('TeamCard - Navigating to:', path, 'for team:', team.teamId);
+    onNavigate(path);
+  };
 
   return (
     <div className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-all hover:border-gray-300"> 
@@ -506,13 +535,13 @@ function TeamCard({ team, currentUser, onNavigate }) {
       
       <div className="flex space-x-2"> 
         <button
-          onClick={() => onNavigate(`/team/${team.teamId}`)}
+          onClick={() => handleNavigate(`/team/${team.teamId}`)}
           className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         >
           Manage
         </button>
         <button
-          onClick={() => onNavigate(`/tasks/${team.teamId}`)}
+          onClick={() => handleNavigate(`/tasks/${team.teamId}`)}
           className="flex-1 bg-green-50 hover:bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
         >
           Tasks
@@ -560,7 +589,7 @@ function EmptyTeamsState({ onCreateTeam, hasError, onRetry }) {
         </svg>
       </div>
       <h3 className="text-lg font-medium text-gray-900 mb-2">No teams yet</h3> 
-      <p className="text-gray-600 mb-4">Create your first team to start managing tasks and collaborating.</p> 
+      <p className="text-gray-600 mb-4">Create your first team to start managing tasks and collaborating with others.</p> 
       <button
         onClick={onCreateTeam}
         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
