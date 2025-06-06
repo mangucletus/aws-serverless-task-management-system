@@ -36,13 +36,20 @@ function TaskList({ user }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (teamId && user?.userId) {
-      fetchUserRoleAndTasks();
-    } else {
-      console.error('TaskList - Missing teamId or user.userId:', { teamId, userId: user?.userId });
-      setError('Invalid team or user information. Please refresh the page.');
+    // FIXED: Enhanced validation for route parameters and user data
+    if (!teamId || !user?.userId) {
+      console.error('TaskList - Missing required data:', { 
+        teamId, 
+        userId: user?.userId,
+        hasUser: !!user 
+      });
+      setTeamExists(false);
+      setError('Invalid team or user information. Please refresh the page or go back to dashboard.');
       setLoading(false);
+      return;
     }
+    
+    fetchUserRoleAndTasks();
   }, [teamId, user]);
 
   async function fetchUserRoleAndTasks() {
@@ -69,7 +76,7 @@ function TaskList({ user }) {
         return;
       }
 
-      // FIXED: Enhanced user membership detection with multiple ID matching
+      // FIXED: Enhanced user membership detection with comprehensive ID matching
       const currentUserMembership = membersResponse.data.listMembers.find(
         member => {
           const memberUserId = member.userId;
@@ -114,7 +121,7 @@ function TaskList({ user }) {
         });
         
         setTeamExists(false);
-        setError('You are not a member of this team.');
+        setError('You are not a member of this team or access has been revoked.');
         return;
       }
 
@@ -389,6 +396,7 @@ function TaskList({ user }) {
     return <LoadingSpinner message="Loading tasks..." />;
   }
 
+  // FIXED: Enhanced team not found component with better error messaging
   if (!teamExists) {
     return (
       <div className="max-w-6xl mx-auto">
@@ -402,14 +410,16 @@ function TaskList({ user }) {
           <p className="text-gray-600 mb-4">
             The team you're looking for doesn't exist or you don't have access to it.
           </p>
-          {/* Debug info in development */}
+          {/* Enhanced debug info in development */}
           {process.env.NODE_ENV === 'development' && (
-            <div className="text-xs text-gray-400 mb-4 max-w-md mx-auto p-2 bg-gray-100 rounded">
+            <div className="text-xs text-gray-400 mb-4 max-w-lg mx-auto p-3 bg-gray-100 rounded">
               <p><strong>Debug Info:</strong></p>
-              <p>Team ID: {teamId}</p>
-              <p>User ID: {user?.userId}</p>
-              <p>User Email: {user?.email}</p>
-              <p>User Sub: {user?.sub}</p>
+              <p>Team ID: {teamId || 'undefined'}</p>
+              <p>User ID: {user?.userId || 'undefined'}</p>
+              <p>User Sub: {user?.sub || 'undefined'}</p>
+              <p>User Email: {user?.email || 'undefined'}</p>
+              <p>Has User Object: {!!user ? 'Yes' : 'No'}</p>
+              <p>Error: {error}</p>
             </div>
           )}
           <div className="flex justify-center space-x-3">

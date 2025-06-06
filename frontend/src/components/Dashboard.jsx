@@ -227,6 +227,53 @@ function Dashboard({ user }) {
     fetchTeams();
   }
 
+  // FIXED: Smart team selection for quick actions
+  function getTargetTeam(preferredRole = null) {
+    if (teams.length === 0) return null;
+    
+    // If a preferred role is specified, try to find a team with that role
+    if (preferredRole) {
+      const roleTeam = teams.find(team => team.userRole === preferredRole);
+      if (roleTeam) return roleTeam;
+    }
+    
+    // Fallback to any team (prefer admin teams, then first available)
+    const adminTeam = teams.find(team => team.userRole === 'admin');
+    return adminTeam || teams[0];
+  }
+
+  // FIXED: Enhanced navigation handlers with proper team selection
+  function handleRecentTeamsClick() {
+    const targetTeam = getTargetTeam();
+    if (targetTeam) {
+      console.log('Dashboard - Navigating to recent/first team:', targetTeam.teamId);
+      navigate(`/team/${targetTeam.teamId}`);
+    } else {
+      setError('No teams available. Please create a team first.');
+    }
+  }
+
+  function handleAllTasksClick() {
+    const targetTeam = getTargetTeam();
+    if (targetTeam) {
+      console.log('Dashboard - Navigating to tasks for team:', targetTeam.teamId);
+      navigate(`/tasks/${targetTeam.teamId}`);
+    } else {
+      setError('No teams available. Please create a team first to view tasks.');
+    }
+  }
+
+  function handleTeamManagementClick() {
+    // Prefer admin teams for management, but allow any team
+    const targetTeam = getTargetTeam('admin');
+    if (targetTeam) {
+      console.log('Dashboard - Navigating to team management:', targetTeam.teamId);
+      navigate(`/team/${targetTeam.teamId}`);
+    } else {
+      setError('No teams available for management. Please create a team first.');
+    }
+  }
+
   if (loading) {
     return <LoadingSpinner message="Loading your teams..." />;
   }
@@ -353,7 +400,7 @@ function Dashboard({ user }) {
         </div>
       </div>
 
-      {/* Quick Actions */}
+      {/* FIXED: Quick Actions with proper team handling */}
       {teams.length > 0 && (
         <div className="mt-8"> 
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3> 
@@ -362,42 +409,34 @@ function Dashboard({ user }) {
               title="Recent Teams"
               description="Access your recently active teams"
               icon={<RecentIcon />}
-              onClick={() => {
-                if (teams.length > 0) {
-                  const targetTeam = teams[0];
-                  console.log('Dashboard - Navigating to recent team:', targetTeam.teamId);
-                  navigate(`/team/${targetTeam.teamId}`);
-                }
-              }}
+              onClick={handleRecentTeamsClick}
+              disabled={teams.length === 0}
             />
             
             <QuickActionCard
               title="All Tasks"
               description="View tasks across all teams"
               icon={<TasksIcon />}
-              onClick={() => {
-                if (teams.length > 0) {
-                  const targetTeam = teams[0];
-                  console.log('Dashboard - Navigating to tasks:', targetTeam.teamId);
-                  navigate(`/tasks/${targetTeam.teamId}`);
-                }
-              }}
+              onClick={handleAllTasksClick}
+              disabled={teams.length === 0}
             />
             
             <QuickActionCard
               title="Team Management"
               description="Manage team settings and members"
               icon={<SettingsIcon />}
-              onClick={() => {
-                if (teams.length > 0) {
-                  // Prefer admin teams for management
-                  const adminTeam = teams.find(team => team.userRole === 'admin');
-                  const targetTeam = adminTeam || teams[0];
-                  console.log('Dashboard - Navigating to team management:', targetTeam.teamId);
-                  navigate(`/team/${targetTeam.teamId}`);
-                }
-              }}
+              onClick={handleTeamManagementClick}
+              disabled={teams.length === 0}
             />
+          </div>
+          
+          {/* Help text for quick actions */}
+          <div className="mt-4 text-sm text-gray-500 text-center">
+            {teams.length === 1 ? (
+              `Quick actions will use your team: "${teams[0].name}"`
+            ) : (
+              `Quick actions will use ${teams.filter(t => t.userRole === 'admin').length > 0 ? 'your admin teams first, then ' : ''}the most appropriate team.`
+            )}
           </div>
         </div>
       )}
@@ -600,15 +639,22 @@ function EmptyTeamsState({ onCreateTeam, hasError, onRetry }) {
   );
 }
 
-// Quick Action Card Component
-function QuickActionCard({ title, description, icon, onClick }) {
+// FIXED: Quick Action Card Component with disabled state
+function QuickActionCard({ title, description, icon, onClick, disabled = false }) {
   return (
     <button
-      onClick={onClick}
-      className="p-4 border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all text-left focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      className={`p-4 border border-gray-200 rounded-lg text-left transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+        disabled 
+          ? 'opacity-50 cursor-not-allowed bg-gray-50' 
+          : 'hover:border-gray-300 hover:shadow-sm bg-white'
+      }`}
     >
       <div className="flex items-center space-x-3"> 
-        <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center"> 
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+          disabled ? 'bg-gray-200' : 'bg-gray-100'
+        }`}> 
           {icon} 
         </div>
         <div>

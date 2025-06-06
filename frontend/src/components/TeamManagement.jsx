@@ -20,13 +20,20 @@ function TeamManagement({ user }) {
   const [teamExists, setTeamExists] = useState(true);
 
   useEffect(() => {
-    if (teamId && user?.userId) {
-      fetchMembers();
-    } else {
-      console.error('TeamManagement - Missing teamId or user.userId:', { teamId, userId: user?.userId });
-      setError('Invalid team or user information. Please refresh the page.');
+    // FIXED: Enhanced validation for route parameters and user data
+    if (!teamId || !user?.userId) {
+      console.error('TeamManagement - Missing required data:', { 
+        teamId, 
+        userId: user?.userId,
+        hasUser: !!user 
+      });
+      setTeamExists(false);
+      setError('Invalid team or user information. Please refresh the page or go back to dashboard.');
       setLoading(false);
+      return;
     }
+    
+    fetchMembers();
   }, [teamId, user]);
 
   async function fetchMembers() {
@@ -58,7 +65,7 @@ function TeamManagement({ user }) {
       console.log('TeamManagement - Members list:', membersList);
       console.log('TeamManagement - Looking for user ID:', user?.userId);
 
-      // FIXED: Find current user's role with robust user ID matching
+      // FIXED: Enhanced user membership detection with comprehensive ID matching
       const currentUserMembership = membersList.find(
         member => {
           const memberUserId = member.userId;
@@ -69,7 +76,8 @@ function TeamManagement({ user }) {
             user?.sub,              // Cognito sub
             user?.username,         // Cognito username  
             user?.email,            // Email as fallback
-            user?.signInDetails?.loginId  // Login ID
+            user?.signInDetails?.loginId,  // Login ID
+            user?.attributes?.email // Email from attributes
           ].filter(Boolean); // Remove undefined/null values
           
           const isMatch = possibleUserIds.some(possibleId => 
@@ -89,8 +97,17 @@ function TeamManagement({ user }) {
         console.log('TeamManagement - User role set to:', currentUserMembership.role);
       } else {
         console.log('TeamManagement - User not found in members list');
+        console.log('TeamManagement - Available member IDs:', membersList.map(m => m.userId));
+        console.log('TeamManagement - User identifiers:', {
+          userId: user?.userId,
+          sub: user?.sub,
+          username: user?.username,
+          email: user?.email,
+          loginId: user?.signInDetails?.loginId
+        });
+        
         setTeamExists(false);
-        setError('You are not a member of this team.');
+        setError('You are not a member of this team or access has been revoked.');
       }
 
     } catch (err) {
@@ -112,7 +129,13 @@ function TeamManagement({ user }) {
           errorMessage += firstError.message || 'Please try again.';
         }
       } else if (err.message) {
-        errorMessage += err.message;
+        if (err.message.includes('NetworkError')) {
+          errorMessage += 'Network connection issue. Please check your internet connection.';
+        } else if (err.message.includes('Authentication') || err.message.includes('Unauthorized')) {
+          errorMessage += 'Authentication issue. Please sign out and back in.';
+        } else {
+          errorMessage += err.message;
+        }
       } else {
         errorMessage += 'Please try refreshing the page.';
       }
@@ -155,7 +178,7 @@ function TeamManagement({ user }) {
         setShowAddForm(false);
         
         // Show success message
-        setError('Member added successfully! 🎉');
+        setError('Member added successfully! 🎉 They will receive a notification.');
         setTimeout(() => {
           setError(null);
         }, 3000);
@@ -200,6 +223,7 @@ function TeamManagement({ user }) {
     return <LoadingSpinner message="Loading team members..." />;
   }
 
+  // FIXED: Enhanced team not found component with better debugging
   if (!teamExists) {
     return (
       <div className="max-w-4xl mx-auto">
@@ -213,13 +237,17 @@ function TeamManagement({ user }) {
           <p className="text-gray-600 mb-4">
             The team you're looking for doesn't exist or you don't have access to it.
           </p>
-          {/* Debug info in development */}
+          {/* Enhanced debug info in development */}
           {process.env.NODE_ENV === 'development' && (
-            <div className="text-xs text-gray-400 mb-4 max-w-md mx-auto">
-              <p>Debug Info:</p>
-              <p>Team ID: {teamId}</p>
-              <p>User ID: {user?.userId}</p>
-              <p>User Object: {JSON.stringify(user, null, 2)}</p>
+            <div className="text-xs text-gray-400 mb-4 max-w-lg mx-auto p-3 bg-gray-100 rounded">
+              <p><strong>Debug Info:</strong></p>
+              <p>Team ID: {teamId || 'undefined'}</p>
+              <p>User ID: {user?.userId || 'undefined'}</p>
+              <p>User Sub: {user?.sub || 'undefined'}</p>
+              <p>User Email: {user?.email || 'undefined'}</p>
+              <p>Has User Object: {!!user ? 'Yes' : 'No'}</p>
+              <p>Members Count: {members.length}</p>
+              <p>Error: {error}</p>
             </div>
           )}
           <div className="flex justify-center space-x-3">
@@ -501,15 +529,16 @@ function TeamManagement({ user }) {
   );
 }
 
-// FIXED: Member Card Component with better user identification
+// FIXED: Enhanced Member Card Component with better user identification
 function MemberCard({ member, currentUser, userRole }) {
-  // Check if this member is the current user
+  // FIXED: Enhanced current user detection with multiple ID matching
   const isCurrentUser = [
     currentUser?.userId,
     currentUser?.sub,
     currentUser?.username,
     currentUser?.email,
-    currentUser?.signInDetails?.loginId
+    currentUser?.signInDetails?.loginId,
+    currentUser?.attributes?.email
   ].filter(Boolean).some(id => id === member.userId);
 
   return (
