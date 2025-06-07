@@ -14,6 +14,7 @@ type Team {
   adminId: ID! # ID of the user who is the admin of the team, required (non-nullable)
   createdAt: String # Timestamp when the team was created, optional
   userRole: String # Role of the authenticated user in the team (e.g., Admin or Member), optional
+  isAdmin: Boolean # Whether the current user is an admin of this team, optional
 }
 
 # Defines the Membership type for representing team membership data in the GraphQL schema
@@ -41,13 +42,22 @@ type Task {
   updatedBy: String # ID or identifier of the user who last updated the task, optional
 }
 
+# FIXED: Enhanced response type for simple operations
+type SimpleResponse {
+  success: Boolean!
+  message: String
+}
+
 # Defines the Query type for read operations in the GraphQL schema
 type Query {
   listTeams: [Team] # Retrieves a list of teams, returns an array of Team objects, optional
   listTasks(teamId: ID!): [Task] # Retrieves tasks for a specific team, requires teamId, returns an array of Task objects, optional
   searchTasks(teamId: ID!, query: String!): [Task] # Searches tasks in a team by a search query, requires teamId and query, returns an array of Task objects, optional
   listMembers(teamId: ID!): [Membership] # Retrieves memberships for a specific team, requires teamId, returns an array of Membership objects, optional
-  getUser(userId: ID!): User # Retrieves a specific user by their ID, requires userId, returns a User object, optional
+  getUser(userId: ID): User # Retrieves a specific user by their ID, optional userId (defaults to current user), returns a User object, optional
+  # FIXED: Add new queries for enhanced team validation
+  getTeam(teamId: ID!): Team # Retrieves a specific team with user role information, requires teamId, returns a Team object, optional
+  getUserTeams: [Team] # Retrieves teams for the current user (alias for listTeams), returns an array of Team objects, optional
 }
 
 # Defines the Mutation type for write operations in the GraphQL schema
@@ -72,7 +82,7 @@ type Mutation {
     deadline: String # Updated deadline for the task, optional
     priority: String # Updated priority for the task, optional
   ): Task # Updates specific details of a task, returns a Task object, optional
-  deleteTask(teamId: ID!, taskId: ID!): Boolean # Deletes a specific task, requires teamId and taskId, returns a Boolean indicating success, optional
+  deleteTask(teamId: ID!, taskId: ID!): SimpleResponse # Deletes a specific task, requires teamId and taskId, returns a SimpleResponse indicating success, optional
 }
 
 # Defines the GraphQL schema entry points

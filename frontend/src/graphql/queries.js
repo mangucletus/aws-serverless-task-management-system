@@ -9,6 +9,7 @@ export const listTeams = gql`
       adminId
       createdAt
       userRole
+      isAdmin
     }
   }
 `;
@@ -69,13 +70,40 @@ export const listMembers = gql`
 
 // Defines a GraphQL query to retrieve details for a specific user
 export const getUser = gql`
-  query GetUser($userId: ID!) {
+  query GetUser($userId: ID) {
     getUser(userId: $userId) {
       userId
       email
       name
       createdAt
       lastLogin
+    }
+  }
+`;
+
+// FIXED: Add new queries for enhanced team validation
+export const getTeam = gql`
+  query GetTeam($teamId: ID!) {
+    getTeam(teamId: $teamId) {
+      teamId
+      name
+      adminId
+      createdAt
+      userRole
+      isAdmin
+    }
+  }
+`;
+
+export const getUserTeams = gql`
+  query GetUserTeams {
+    getUserTeams {
+      teamId
+      name
+      adminId
+      createdAt
+      userRole
+      isAdmin
     }
   }
 `;

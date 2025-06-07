@@ -9,6 +9,7 @@ export const createTeam = gql`
       adminId
       createdAt
       userRole
+      isAdmin
     }
   }
 `;
@@ -54,6 +55,8 @@ export const createTask = gql`
       deadline
       createdBy
       createdAt
+      updatedAt
+      updatedBy
     }
   }
 `;
@@ -110,9 +113,12 @@ export const updateTaskDetails = gql`
   }
 `;
 
-// Defines a GraphQL mutation to delete a task
+// FIXED: Defines a GraphQL mutation to delete a task - now returns SimpleResponse
 export const deleteTask = gql`
   mutation DeleteTask($teamId: ID!, $taskId: ID!) {
-    deleteTask(teamId: $teamId, taskId: $taskId)
+    deleteTask(teamId: $teamId, taskId: $taskId) {
+      success
+      message
+    }
   }
 `;

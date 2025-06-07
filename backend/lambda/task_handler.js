@@ -110,6 +110,57 @@ function normalizeUserId(identity) {
   throw new AuthorizationError('Unable to determine user identity');
 }
 
+// FIXED: Enhanced team membership validation function
+async function validateTeamMembership(teamId, userId, requiredRole = null) {
+  console.log(`[VALIDATE_TEAM_MEMBERSHIP] Checking membership for user ${userId} in team ${teamId}, required role: ${requiredRole}`);
+  
+  try {
+    // Check if team exists first
+    const teamResult = await dynamodb.send(new GetCommand({
+      TableName: process.env.DYNAMODB_TEAMS_TABLE,
+      Key: { teamId }
+    }));
+    
+    if (!teamResult.Item) {
+      console.log(`[VALIDATE_TEAM_MEMBERSHIP] Team ${teamId} not found`);
+      throw new NotFoundError('Team not found');
+    }
+    
+    // Check user membership
+    const membershipResult = await dynamodb.send(new GetCommand({
+      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
+      Key: { teamId, userId }
+    }));
+    
+    if (!membershipResult.Item) {
+      console.log(`[VALIDATE_TEAM_MEMBERSHIP] User ${userId} is not a member of team ${teamId}`);
+      throw new AuthorizationError('You are not a member of this team');
+    }
+    
+    const membership = membershipResult.Item;
+    console.log(`[VALIDATE_TEAM_MEMBERSHIP] User role: ${membership.role}`);
+    
+    // Check role requirement if specified
+    if (requiredRole && membership.role !== requiredRole) {
+      console.log(`[VALIDATE_TEAM_MEMBERSHIP] User role ${membership.role} does not match required role ${requiredRole}`);
+      throw new AuthorizationError(`This action requires ${requiredRole} role`);
+    }
+    
+    return {
+      team: teamResult.Item,
+      membership: membership,
+      isAdmin: membership.role === 'admin'
+    };
+    
+  } catch (error) {
+    if (error instanceof NotFoundError || error instanceof AuthorizationError) {
+      throw error;
+    }
+    console.error(`[VALIDATE_TEAM_MEMBERSHIP] Unexpected error:`, error);
+    throw new Error(`Failed to validate team membership: ${error.message}`);
+  }
+}
+
 async function sendNotification(subject, message, recipientId, metadata = {}) {
   try {
     const params = {
@@ -226,6 +277,13 @@ exports.handler = async (event) => {
         break;
       case 'getUser':
         result = await getUser(args, userId);
+        break;
+      // FIXED: Add new operations for team validation
+      case 'getTeam':
+        result = await getTeam(args, userId, userGroups);
+        break;
+      case 'getUserTeams':
+        result = await getUserTeams(userId);
         break;
       default:
         throw new ValidationError(`Unknown GraphQL field: ${fieldName}`);
@@ -344,18 +402,8 @@ async function addMember(args, userId, userGroups) {
   validateEmail(args.email);
   
   try {
-    const adminCheck = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-      Key: { teamId: args.teamId, userId }
-    }));
-    
-    if (!adminCheck.Item) {
-      throw new AuthorizationError('You are not a member of this team');
-    }
-    
-    if (adminCheck.Item.role !== 'admin') {
-      throw new AuthorizationError('Only team admins can add members');
-    }
+    // FIXED: Use the enhanced validation function
+    const { team } = await validateTeamMembership(args.teamId, userId, 'admin');
     
     let memberUserId;
     try {
@@ -396,15 +444,6 @@ async function addMember(args, userId, userGroups) {
       throw new ValidationError('User is already a member of this team');
     }
     
-    const teamInfo = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_TEAMS_TABLE,
-      Key: { teamId: args.teamId }
-    }));
-    
-    if (!teamInfo.Item) {
-      throw new NotFoundError('Team not found');
-    }
-    
     const membership = {
       teamId: args.teamId,
       userId: memberUserId,
@@ -420,11 +459,11 @@ async function addMember(args, userId, userGroups) {
     
     await sendNotification(
       'Team Invitation',
-      `You have been added to the team "${teamInfo.Item.name}". Start collaborating on tasks now!`,
+      `You have been added to the team "${team.name}". Start collaborating on tasks now!`,
       memberUserId,
       {
         teamId: args.teamId,
-        teamName: teamInfo.Item.name,
+        teamName: team.name,
         invitedBy: userId,
         action: 'team_invitation'
       }
@@ -433,7 +472,7 @@ async function addMember(args, userId, userGroups) {
     logSuccess('ADD_MEMBER', 'Member added successfully', { 
       teamId: args.teamId, 
       newMember: memberUserId,
-      teamName: teamInfo.Item.name
+      teamName: team.name
     });
     
     return membership;
@@ -471,22 +510,8 @@ async function createTask(args, userId, userGroups) {
   }
   
   try {
-    console.log('[CREATE_TASK] Checking membership for user:', userId, 'in team:', args.teamId);
-    
-    const membership = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-      Key: { teamId: args.teamId, userId }
-    }));
-    
-    console.log('[CREATE_TASK] Membership check result:', membership.Item ? 'Found' : 'Not found');
-    
-    if (!membership.Item) {
-      throw new AuthorizationError('You must be a team member to create tasks');
-    }
-    
-    if (membership.Item.role !== 'admin') {
-      throw new AuthorizationError('Only team admins can create tasks');
-    }
+    // FIXED: Use the enhanced validation function
+    const { team } = await validateTeamMembership(args.teamId, userId, 'admin');
     
     if (args.assignedTo) {
       const assigneeCheck = await dynamodb.send(new GetCommand({
@@ -497,15 +522,6 @@ async function createTask(args, userId, userGroups) {
       if (!assigneeCheck.Item) {
         throw new ValidationError('Cannot assign task to user who is not a team member');
       }
-    }
-    
-    const teamInfo = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_TEAMS_TABLE,
-      Key: { teamId: args.teamId }
-    }));
-    
-    if (!teamInfo.Item) {
-      throw new NotFoundError('Team not found');
     }
     
     const taskId = uuidv4();
@@ -534,13 +550,13 @@ async function createTask(args, userId, userGroups) {
     if (args.assignedTo) {
       await sendNotification(
         'New Task Assignment',
-        `You have been assigned a new task: "${args.title}" in team "${teamInfo.Item.name}". Priority: ${task.priority}`,
+        `You have been assigned a new task: "${args.title}" in team "${team.name}". Priority: ${task.priority}`,
         args.assignedTo,
         {
           taskId,
           taskTitle: args.title,
           teamId: args.teamId,
-          teamName: teamInfo.Item.name,
+          teamName: team.name,
           priority: task.priority,
           deadline: task.deadline,
           action: 'task_assigned'
@@ -578,6 +594,9 @@ async function updateTask(args, userId, userGroups) {
   }
   
   try {
+    // FIXED: Use the enhanced validation function
+    const { team, membership } = await validateTeamMembership(args.teamId, userId);
+    
     const taskResult = await dynamodb.send(new GetCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       Key: { teamId: args.teamId, taskId: args.taskId }
@@ -590,28 +609,10 @@ async function updateTask(args, userId, userGroups) {
     const task = taskResult.Item;
     const oldStatus = task.status;
     
-    const membership = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-      Key: { teamId: args.teamId, userId }
-    }));
-    
-    if (!membership.Item) {
-      throw new AuthorizationError('You must be a team member to update tasks');
-    }
-    
-    const canUpdate = task.assignedTo === userId || membership.Item.role === 'admin';
+    const canUpdate = task.assignedTo === userId || membership.role === 'admin';
     
     if (!canUpdate) {
       throw new AuthorizationError('You can only update tasks assigned to you or if you are a team admin');
-    }
-    
-    const teamInfo = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_TEAMS_TABLE,
-      Key: { teamId: args.teamId }
-    }));
-    
-    if (!teamInfo.Item) {
-      throw new NotFoundError('Team not found');
     }
     
     const timestamp = new Date().toISOString();
@@ -636,13 +637,13 @@ async function updateTask(args, userId, userGroups) {
     if (task.assignedTo && oldStatus !== args.status) {
       await sendNotification(
         'Task Status Updated',
-        `The task "${task.title}" in team "${teamInfo.Item.name}" has been updated to "${args.status}" by ${userId}.`,
+        `The task "${task.title}" in team "${team.name}" has been updated to "${args.status}" by ${userId}.`,
         task.assignedTo,
         {
           taskId: args.taskId,
           taskTitle: task.title,
           teamId: args.teamId,
-          teamName: teamInfo.Item.name,
+          teamName: team.name,
           oldStatus,
           newStatus: args.status,
           action: 'task_status_updated'
@@ -688,6 +689,9 @@ async function updateTaskDetails(args, userId, userGroups) {
   }
   
   try {
+    // FIXED: Use the enhanced validation function
+    const { team } = await validateTeamMembership(args.teamId, userId, 'admin');
+    
     const taskResult = await dynamodb.send(new GetCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       Key: { teamId: args.teamId, taskId: args.taskId }
@@ -699,19 +703,6 @@ async function updateTaskDetails(args, userId, userGroups) {
     
     const task = taskResult.Item;
     
-    const membership = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-      Key: { teamId: args.teamId, userId }
-    }));
-    
-    if (!membership.Item) {
-      throw new AuthorizationError('You must be a team member to update task details');
-    }
-    
-    if (membership.Item.role !== 'admin') {
-      throw new AuthorizationError('Only team admins can update task details');
-    }
-    
     if (args.assignedTo) {
       const assigneeCheck = await dynamodb.send(new GetCommand({
         TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
@@ -721,15 +712,6 @@ async function updateTaskDetails(args, userId, userGroups) {
       if (!assigneeCheck.Item && args.assignedTo !== null) {
         throw new ValidationError('Cannot assign task to user who is not a team member');
       }
-    }
-    
-    const teamInfo = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_TEAMS_TABLE,
-      Key: { teamId: args.teamId }
-    }));
-    
-    if (!teamInfo.Item) {
-      throw new NotFoundError('Team not found');
     }
     
     const timestamp = new Date().toISOString();
@@ -775,13 +757,13 @@ async function updateTaskDetails(args, userId, userGroups) {
     if (args.assignedTo && args.assignedTo !== task.assignedTo) {
       await sendNotification(
         'Task Reassigned',
-        `The task "${task.title}" in team "${teamInfo.Item.name}" has been reassigned to you.`,
+        `The task "${task.title}" in team "${team.name}" has been reassigned to you.`,
         args.assignedTo,
         {
           taskId: args.taskId,
           taskTitle: task.title,
           teamId: args.teamId,
-          teamName: teamInfo.Item.name,
+          teamName: team.name,
           action: 'task_reassigned'
         }
       );
@@ -809,6 +791,9 @@ async function deleteTask(args, userId, userGroups) {
   validateRequired(args?.taskId, 'Task ID');
   
   try {
+    // FIXED: Use the enhanced validation function
+    const { team } = await validateTeamMembership(args.teamId, userId, 'admin');
+    
     const taskResult = await dynamodb.send(new GetCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       Key: { teamId: args.teamId, taskId: args.taskId }
@@ -820,28 +805,6 @@ async function deleteTask(args, userId, userGroups) {
     
     const task = taskResult.Item;
     
-    const membership = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-      Key: { teamId: args.teamId, userId }
-    }));
-    
-    if (!membership.Item) {
-      throw new AuthorizationError('You must be a team member to delete tasks');
-    }
-    
-    if (membership.Item.role !== 'admin') {
-      throw new AuthorizationError('Only team admins can delete tasks');
-    }
-    
-    const teamInfo = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_TEAMS_TABLE,
-      Key: { teamId: args.teamId }
-    }));
-    
-    if (!teamInfo.Item) {
-      throw new NotFoundError('Team not found');
-    }
-    
     await dynamodb.send(new DeleteCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
       Key: { teamId: args.teamId, taskId: args.taskId }
@@ -850,13 +813,13 @@ async function deleteTask(args, userId, userGroups) {
     if (task.assignedTo) {
       await sendNotification(
         'Task Deleted',
-        `The task "${task.title}" in team "${teamInfo.Item.name}" has been deleted.`,
+        `The task "${task.title}" in team "${team.name}" has been deleted.`,
         task.assignedTo,
         {
           taskId: args.taskId,
           taskTitle: task.title,
           teamId: args.teamId,
-          teamName: teamInfo.Item.name,
+          teamName: team.name,
           action: 'task_deleted'
         }
       );
@@ -935,18 +898,8 @@ async function listTasks(args, userId, userGroups) {
   validateRequired(args?.teamId, 'Team ID');
   
   try {
-    console.log('[LIST_TASKS] Checking membership for user:', userId, 'in team:', args.teamId);
-    
-    const membership = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-      Key: { teamId: args.teamId, userId }
-    }));
-    
-    console.log('[LIST_TASKS] Membership check result:', membership.Item ? 'Found' : 'Not found');
-    
-    if (!membership.Item) {
-      throw new AuthorizationError('You must be a team member to list tasks');
-    }
+    // FIXED: Use the enhanced validation function
+    await validateTeamMembership(args.teamId, userId);
     
     const tasks = await dynamodb.send(new QueryCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
@@ -964,7 +917,7 @@ async function listTasks(args, userId, userGroups) {
     return tasks.Items || [];
     
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof AuthorizationError) {
+    if (error instanceof ValidationError || error instanceof AuthorizationError || error instanceof NotFoundError) {
       throw error;
     }
     logError('LIST_TASKS', error, { teamId: args.teamId });
@@ -980,14 +933,8 @@ async function searchTasks(args, userId, userGroups) {
   validateLength(args.query, 'Search query', 1, 200);
   
   try {
-    const membership = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-      Key: { teamId: args.teamId, userId }
-    }));
-    
-    if (!membership.Item) {
-      throw new AuthorizationError('You must be a team member to search tasks');
-    }
+    // FIXED: Use the enhanced validation function
+    await validateTeamMembership(args.teamId, userId);
     
     const tasks = await dynamodb.send(new QueryCommand({
       TableName: process.env.DYNAMODB_TASKS_TABLE,
@@ -1012,7 +959,7 @@ async function searchTasks(args, userId, userGroups) {
     return filteredTasks;
     
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof AuthorizationError) {
+    if (error instanceof ValidationError || error instanceof AuthorizationError || error instanceof NotFoundError) {
       throw error;
     }
     logError('SEARCH_TASKS', error, { teamId: args.teamId, query: args.query });
@@ -1026,18 +973,8 @@ async function listMembers(args, userId, userGroups) {
   validateRequired(args?.teamId, 'Team ID');
   
   try {
-    console.log('[LIST_MEMBERS] Checking membership for user:', userId, 'in team:', args.teamId);
-    
-    const membership = await dynamodb.send(new GetCommand({
-      TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
-      Key: { teamId: args.teamId, userId }
-    }));
-    
-    console.log('[LIST_MEMBERS] Membership check result:', membership.Item ? 'Found' : 'Not found');
-    
-    if (!membership.Item) {
-      throw new AuthorizationError('You must be a team member to list members');
-    }
+    // FIXED: Use the enhanced validation function
+    await validateTeamMembership(args.teamId, userId);
     
     const members = await dynamodb.send(new QueryCommand({
       TableName: process.env.DYNAMODB_MEMBERSHIPS_TABLE,
@@ -1057,7 +994,7 @@ async function listMembers(args, userId, userGroups) {
     return members.Items || [];
     
   } catch (error) {
-    if (error instanceof ValidationError || error instanceof AuthorizationError) {
+    if (error instanceof ValidationError || error instanceof AuthorizationError || error instanceof NotFoundError) {
       throw error;
     }
     logError('LIST_MEMBERS', error, { teamId: args.teamId });
@@ -1092,5 +1029,49 @@ async function getUser(args, userId) {
     }
     logError('GET_USER', error, { targetUserId });
     throw new Error(`Failed to get user: ${error.message}`);
+  }
+}
+
+// FIXED: Add new functions for enhanced team validation
+async function getTeam(args, userId, userGroups) {
+  console.log('[GET_TEAM] Starting team retrieval:', { args, userId });
+  
+  validateRequired(args?.teamId, 'Team ID');
+  
+  try {
+    const { team, membership } = await validateTeamMembership(args.teamId, userId);
+    
+    const result = {
+      ...team,
+      userRole: membership.role,
+      isAdmin: membership.role === 'admin'
+    };
+    
+    logSuccess('GET_TEAM', 'Team retrieved successfully', { 
+      teamId: args.teamId,
+      userRole: membership.role
+    });
+    
+    return result;
+    
+  } catch (error) {
+    if (error instanceof ValidationError || error instanceof AuthorizationError || error instanceof NotFoundError) {
+      throw error;
+    }
+    logError('GET_TEAM', error, { teamId: args.teamId });
+    throw new Error(`Failed to get team: ${error.message}`);
+  }
+}
+
+async function getUserTeams(userId) {
+  console.log('[GET_USER_TEAMS] Starting user teams retrieval:', { userId });
+  
+  try {
+    // This is essentially the same as listTeams but with a different name for clarity
+    return await listTeams(userId);
+    
+  } catch (error) {
+    logError('GET_USER_TEAMS', error, { userId });
+    throw new Error(`Failed to get user teams: ${error.message}`);
   }
 }

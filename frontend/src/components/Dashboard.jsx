@@ -223,6 +223,36 @@ function Dashboard({ user }) {
     fetchTeams();
   }
 
+  // FIXED: Enhanced navigation handlers with better team validation
+  const handleNavigateToTeam = (teamId, actionType = 'manage') => {
+    if (!teamId || teamId === 'undefined' || teamId === 'null') {
+      console.error('Dashboard - Invalid team ID for navigation:', teamId);
+      setError('Invalid team selected. Please try again.');
+      return;
+    }
+
+    const team = teams.find(t => t.teamId === teamId);
+    if (!team) {
+      console.error('Dashboard - Team not found in current teams list:', teamId);
+      setError('Team not found. Please refresh the page and try again.');
+      return;
+    }
+
+    console.log(`Dashboard - Navigating to ${actionType} for team:`, teamId, 'Team data:', team);
+    
+    switch (actionType) {
+      case 'manage':
+        navigate(`/team/${teamId}`);
+        break;
+      case 'tasks':
+        navigate(`/tasks/${teamId}`);
+        break;
+      default:
+        console.error('Dashboard - Unknown action type:', actionType);
+        setError('Invalid navigation action.');
+    }
+  };
+
   if (loading) {
     return <LoadingSpinner message="Loading your teams..." />;
   }
@@ -325,7 +355,7 @@ function Dashboard({ user }) {
                   key={team.teamId}
                   team={team}
                   currentUser={user}
-                  onNavigate={navigate}
+                  onNavigate={handleNavigateToTeam}
                 />
               ))}
             </div>
@@ -339,6 +369,7 @@ function Dashboard({ user }) {
         </div>
       </div>
 
+      {/* FIXED: Enhanced Quick Actions with better team validation */}
       {teams.length > 0 && (
         <div className="mt-8"> 
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3> 
@@ -348,37 +379,44 @@ function Dashboard({ user }) {
               description="Access your recently active teams"
               icon={<RecentIcon />}
               onClick={() => {
-                if (teams.length > 0) {
-                  const targetTeam = teams[0];
-                  console.log('Dashboard - Navigating to recent team:', targetTeam.teamId);
-                  navigate(`/team/${targetTeam.teamId}`);
+                const targetTeam = teams[0]; // Most recent team
+                if (targetTeam && targetTeam.teamId) {
+                  handleNavigateToTeam(targetTeam.teamId, 'manage');
+                } else {
+                  setError('No teams available for navigation.');
                 }
               }}
+              disabled={teams.length === 0}
             />
             <QuickActionCard
               title="All Tasks"
               description="View tasks across all teams"
               icon={<TasksIcon />}
               onClick={() => {
-                if (teams.length > 0) {
-                  const targetTeam = teams[0];
-                  console.log('Dashboard - Navigating to tasks:', targetTeam.teamId);
-                  navigate(`/tasks/${targetTeam.teamId}`);
+                const targetTeam = teams[0]; // Use first available team
+                if (targetTeam && targetTeam.teamId) {
+                  handleNavigateToTeam(targetTeam.teamId, 'tasks');
+                } else {
+                  setError('No teams available for task viewing.');
                 }
               }}
+              disabled={teams.length === 0}
             />
             <QuickActionCard
               title="Team Management"
               description="Manage team settings and members"
               icon={<SettingsIcon />}
               onClick={() => {
-                if (teams.length > 0) {
-                  const adminTeam = teams.find(team => team.userRole === 'admin');
-                  const targetTeam = adminTeam || teams[0];
-                  console.log('Dashboard - Navigating to team management:', targetTeam.teamId);
-                  navigate(`/team/${targetTeam.teamId}`);
+                // Prefer admin teams for management
+                const adminTeam = teams.find(team => team.userRole === 'admin');
+                const targetTeam = adminTeam || teams[0];
+                if (targetTeam && targetTeam.teamId) {
+                  handleNavigateToTeam(targetTeam.teamId, 'manage');
+                } else {
+                  setError('No teams available for management.');
                 }
               }}
+              disabled={teams.length === 0}
             />
           </div>
         </div>
@@ -483,9 +521,23 @@ function TeamCard({ team, currentUser, onNavigate }) {
 
   const config = roleConfig[team.userRole] || roleConfig.member;
 
-  const handleNavigate = (path) => {
-    console.log('TeamCard - Navigating to:', path, 'for team:', team.teamId);
-    onNavigate(path);
+  // FIXED: Enhanced navigation handlers with validation
+  const handleManageClick = () => {
+    if (!team.teamId) {
+      console.error('TeamCard - No team ID available for manage action');
+      return;
+    }
+    console.log('TeamCard - Manage clicked for team:', team.teamId);
+    onNavigate(team.teamId, 'manage');
+  };
+
+  const handleTasksClick = () => {
+    if (!team.teamId) {
+      console.error('TeamCard - No team ID available for tasks action');
+      return;
+    }
+    console.log('TeamCard - Tasks clicked for team:', team.teamId);
+    onNavigate(team.teamId, 'tasks');
   };
 
   return (
@@ -511,16 +563,25 @@ function TeamCard({ team, currentUser, onNavigate }) {
         <p className="text-xs text-gray-500 mt-1">{config.description}</p>
       </div>
       
+      {/* Debug info in development */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="mb-3 text-xs text-gray-400">
+          Team ID: {team.teamId || 'undefined'}
+        </div>
+      )}
+      
       <div className="flex space-x-2"> 
         <button
-          onClick={() => handleNavigate(`/team/${team.teamId}`)}
-          className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          onClick={handleManageClick}
+          disabled={!team.teamId}
+          className="flex-1 bg-blue-50 hover:bg-blue-100 disabled:bg-gray-100 disabled:text-gray-400 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
         >
           Manage
         </button>
         <button
-          onClick={() => handleNavigate(`/tasks/${team.teamId}`)}
-          className="flex-1 bg-green-50 hover:bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+          onClick={handleTasksClick}
+          disabled={!team.teamId}
+          className="flex-1 bg-green-50 hover:bg-green-100 disabled:bg-gray-100 disabled:text-gray-400 text-green-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
         >
           Tasks
         </button>
@@ -577,11 +638,14 @@ function EmptyTeamsState({ onCreateTeam, hasError, onRetry }) {
   );
 }
 
-function QuickActionCard({ title, description, icon, onClick }) {
+function QuickActionCard({ title, description, icon, onClick, disabled = false }) {
   return (
     <button
       onClick={onClick}
-      className="p-4 border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all text-left focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+      disabled={disabled}
+      className={`p-4 border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all text-left focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+        disabled ? 'opacity-50 cursor-not-allowed' : ''
+      }`}
     >
       <div className="flex items-center space-x-3"> 
         <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center"> 

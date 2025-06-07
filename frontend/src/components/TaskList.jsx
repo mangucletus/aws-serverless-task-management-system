@@ -263,6 +263,7 @@ function TaskList({ user }) {
     }
   }
 
+  // FIXED: Updated delete handler to work with SimpleResponse type
   async function handleDeleteTask(taskId, taskTitle) {
     if (!window.confirm(`Are you sure you want to delete the task "${taskTitle}"? This action cannot be undone.`)) {
       return;
@@ -274,14 +275,28 @@ function TaskList({ user }) {
       
       console.log('TaskList - Deleting task:', { teamId, taskId });
       
-      await client.graphql({
+      const response = await client.graphql({
         query: deleteTask,
         variables: { teamId, taskId },
         authMode: 'userPool'
       });
       
-      console.log('TaskList - Task deleted successfully');
-      await fetchTasks(); // Refresh task list
+      console.log('TaskList - Delete task response:', response);
+      
+      // FIXED: Handle SimpleResponse type from backend
+      if (response.data?.deleteTask?.success) {
+        console.log('TaskList - Task deleted successfully');
+        await fetchTasks(); // Refresh task list
+        
+        // Show success message if provided
+        if (response.data.deleteTask.message) {
+          setError(`Success: ${response.data.deleteTask.message}`);
+          setTimeout(() => setError(null), 3000);
+        }
+      } else {
+        throw new Error(response.data?.deleteTask?.message || 'Delete operation failed');
+      }
+      
     } catch (err) {
       console.error('TaskList - Delete task error:', err);
       let errorMessage = 'Failed to delete task: ';
@@ -492,6 +507,7 @@ function TaskList({ user }) {
           <ErrorMessage 
             message={error}
             onDismiss={() => setError(null)}
+            type={error.includes('Success:') ? 'success' : 'error'}
           />
           {error.includes('Failed to load') && (
             <div className="mt-3">

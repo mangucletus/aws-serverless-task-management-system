@@ -481,6 +481,25 @@ resource "aws_appsync_resolver" "get_user" {
   kind = "UNIT"
 }
 
+# FIXED: Add new resolvers for enhanced team validation
+resource "aws_appsync_resolver" "get_team" {
+  api_id      = aws_appsync_graphql_api.api.id
+  field       = "getTeam"
+  type        = "Query"
+  data_source = aws_appsync_datasource.lambda.name
+  
+  kind = "UNIT"
+}
+
+resource "aws_appsync_resolver" "get_user_teams" {
+  api_id      = aws_appsync_graphql_api.api.id
+  field       = "getUserTeams"
+  type        = "Query"
+  data_source = aws_appsync_datasource.lambda.name
+  
+  kind = "UNIT"
+}
+
 # Direct Lambda Resolvers - Mutation Resolvers
 resource "aws_appsync_resolver" "create_team" {
   api_id      = aws_appsync_graphql_api.api.id
