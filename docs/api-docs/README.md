@@ -1,4 +1,4 @@
-# 📡 Task Management System - API Documentation
+#  Task Management System - API Documentation
 
 Complete GraphQL API documentation for the Task Management System, including schema definitions, query examples, authentication, and integration guidelines.
 
@@ -6,7 +6,7 @@ Complete GraphQL API documentation for the Task Management System, including sch
 ![AWS AppSync](https://img.shields.io/badge/AWS-AppSync-orange)
 ![Authentication](https://img.shields.io/badge/Auth-Cognito-green)
 
-## 📋 Table of Contents
+##  Table of Contents
 
 - [API Overview](#-api-overview)
 - [Authentication](#-authentication)
@@ -20,7 +20,7 @@ Complete GraphQL API documentation for the Task Management System, including sch
 - [Rate Limiting](#-rate-limiting)
 - [Code Examples](#-code-examples)
 
-## 🔗 API Overview
+##  API Overview
 
 ### Endpoint Information
 
@@ -58,7 +58,7 @@ graph LR
     class SNS notification
 ```
 
-## 🔐 Authentication
+##  Authentication
 
 ### Authentication Flow
 

@@ -1,7 +1,9 @@
-System Architecture Guide
+# System Architecture Guide
 
 This document provides an overview of the Task Management Application's architecture, including components, interactions, and a visual diagram.
-Overview
+
+## Overview
+
 The application uses a serverless architecture on AWS, with a React frontend and a GraphQL backend. It leverages AWS services for scalability, security, and reliability.
 Components
 
@@ -17,7 +19,8 @@ AWS Cognito: Manages user authentication and authorization.
 
 Infrastructure: Defined using Terraform for automated deployment.
 
-Architecture Diagram
+## Architecture Diagram
+
 Below is a Mermaid diagram illustrating the application architecture:
 graph TD
     A[User] -->|HTTPS| B[React Frontend]
@@ -36,7 +39,7 @@ graph TD
     J -->|Deploy| H
     J -->|Deploy| I
 
-Data Flow
+## Data Flow
 
 User Authentication: Users sign in via AWS Cognito, receiving a JWT token.
 API Requests: The frontend sends GraphQL requests to AWS AppSync with the JWT token.
@@ -45,19 +48,19 @@ Data Storage: TaskHandler interacts with DynamoDB for CRUD operations.
 Notifications: NotificationHandler publishes messages to SNS, which triggers SES to send emails.
 Real-Time Updates: AppSync subscriptions notify clients of task updates.
 
-Security
+## Security
 
 Authentication: AWS Cognito secures user access.
 Authorization: AppSync enforces role-based access (e.g., admin-only for deleteTask).
 Data Encryption: All data is encrypted at rest (DynamoDB, SES) and in transit (HTTPS, SNS).
 
-Scalability
+## Scalability
 
 Serverless: Lambda and AppSync scale automatically with demand.
 DynamoDB: Handles high-throughput reads/writes with on-demand capacity.
 SNS/SES: Scale to support large volumes of notifications.
 
-Related Documentation
+## Related Documentation
 
 Main README
 Backend README

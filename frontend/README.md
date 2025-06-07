@@ -1,4 +1,4 @@
-# 🎨 Task Management System - Frontend Documentation
+#  Task Management System - Frontend Documentation
 
 A modern React-based frontend application built with Vite, featuring AWS Cognito authentication, real-time GraphQL data with AWS AppSync, and responsive design for collaborative team task management.
 
@@ -10,20 +10,20 @@ A modern React-based frontend application built with Vite, featuring AWS Cognito
 
 ## 📋 Table of Contents
 
-- [🏗️ Architecture Overview](#️-architecture-overview)
-- [🧩 Component Structure](#-component-structure)
-- [🔐 Authentication Flow](#-authentication-flow)
-- [📡 GraphQL Integration](#-graphql-integration)
-- [🎨 UI/UX Design System](#-uiux-design-system)
-- [🚀 Getting Started](#-getting-started)
-- [⚙️ Configuration](#️-configuration)
-- [🧪 Testing Strategy](#-testing-strategy)
-- [📱 Responsive Design](#-responsive-design)
-- [⚡ Performance Optimization](#-performance-optimization)
-- [🔧 Error Handling](#-error-handling)
-- [🐛 Issues & Solutions](#-issues--solutions)
+- [ Architecture Overview](#️-architecture-overview)
+- [ Component Structure](#-component-structure)
+- [ Authentication Flow](#-authentication-flow)
+- [ GraphQL Integration](#-graphql-integration)
+- [ UI/UX Design System](#-uiux-design-system)
+- [ Getting Started](#-getting-started)
+- [ Configuration](#️-configuration)
+- [ Testing Strategy](#-testing-strategy)
+- [ Responsive Design](#-responsive-design)
+- [ Performance Optimization](#-performance-optimization)
+- [ Error Handling](#-error-handling)
+- [ Issues & Solutions](#-issues--solutions)
 
-## 🏗️ Architecture Overview
+##  Architecture Overview
 
 ### Frontend Architecture Diagram
 
@@ -151,7 +151,7 @@ sequenceDiagram
     React->>User: Update UI
 ```
 
-## 🧩 Component Structure
+##  Component Structure
 
 ### Component Hierarchy
 

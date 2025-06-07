@@ -1,4 +1,4 @@
-# 🔧 Task Management System - Complete Backend Documentation
+#  Task Management System - Complete Backend Documentation
 
 The backend infrastructure for the Task Management System, built with AWS serverless technologies and managed through Infrastructure as Code (IaC) using Terraform.
 
@@ -8,9 +8,8 @@ The backend infrastructure for the Task Management System, built with AWS server
 ![Terraform](https://img.shields.io/badge/Terraform-1.5+-blueviolet)
 
 
-## 📋 Table of Contents
+##  Table of Contents
 
-- [Critical Issues Fixed](#-critical-issues-fixed)
 - [Architecture Overview](#️-architecture-overview)
 - [Database Schema](#️-database-schema)
 - [Lambda Functions](#-lambda-functions)
@@ -3728,5 +3727,5 @@ terraform apply -var="environment=prod"
 
 ---
 
-**🔗 [Frontend Documentation](../frontend/README.md) | [API Documentation](../api/README.md) | [Deployment Guide](../deployment/README.md)**
+**🔙 [Back to Main Project Documentation](../README.md)**
 

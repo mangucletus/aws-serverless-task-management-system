@@ -22,7 +22,6 @@ A modern, serverless task management application built with React, AWS Lambda, D
 - [🔒 Security](#-security)
 - [🧪 Testing](#-testing)
 - [🆘 Troubleshooting](#-troubleshooting)
-- [🤝 Contributing](#-contributing)
 
 ## 🏗️ Architecture Overview
 
@@ -750,7 +749,7 @@ graph TB
 - **🚨 Security Monitoring**: Real-time threat detection
 - **📋 Vulnerability Scanning**: Automated security assessments
 
-For detailed security configurations, see our **[🏗️ Architecture Guide](./docs/system-architecture-guide/README.md#security)**.
+
 
 ## 🧪 Testing
 
@@ -1001,4 +1000,3 @@ aws dynamodb scan --table-name Tasks --select COUNT
 
 **🚀 Built with ❤️ by [Cletus Nehinlalei Mangu](https://github.com/mangucletus)**
 
-*Ready to revolutionize your team's task management? [Get started now](#-quick-start) or [explore the architecture](./docs/system-architecture-guide/README.md)!*

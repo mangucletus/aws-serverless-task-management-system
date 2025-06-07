@@ -1,21 +1,26 @@
-Deployment Guide
+# Deployment Guide
 
 This document provides step-by-step instructions for deploying the Task Management Application to AWS.
-Overview
+
+## Overview
+
 The application is deployed using Terraform for infrastructure and AWS CLI for Lambda functions. The frontend is hosted on AWS S3 or Amplify Hosting.
-Prerequisites
+
+## Prerequisites
 
 AWS CLI configured with appropriate credentials
 Terraform (v1.5 or later)
 Node.js (v18 or later)
 AWS account with permissions for S3, CloudFront, Lambda, DynamoDB, AppSync, SNS, SES, and Cognito
 
-Deployment Steps
-1. Clone the Repository
+## Deployment Steps
+
+### 1. Clone the Repository
+
 git clone <repository-url>
 cd task-management-app
 
-2. Deploy Infrastructure
+### 2. Deploy Infrastructure
 
 Navigate to the terraform directory:cd terraform
 
@@ -28,7 +33,7 @@ Apply the configuration:terraform apply
 
 Note the outputs (e.g., appsync_endpoint, cognito_user_pool_id, sns_topic_arn) for configuration.
 
-3. Configure Backend
+### 3. Configure Backend
 
 Navigate to the backend directory:cd ../backend
 
@@ -50,7 +55,7 @@ aws lambda update-function-code --function-name NotificationHandler --zip-file f
 
 
 
-4. Configure Frontend
+### 4. Configure Frontend
 
 Navigate to the frontend directory:cd ../../frontend
 
@@ -68,7 +73,7 @@ Build the frontend:npm run build
 
 
 
-5. Deploy Frontend
+### 5. Deploy Frontend
 
 Option 1: AWS S3 and CloudFront
 Create an S3 bucket:aws s3 mb s3://<your-bucket-name>
@@ -87,7 +92,7 @@ Deploy the app.
 
 
 
-6. Configure Notifications
+### 6. Configure Notifications
 
 Verify email addresses in AWS SES:
 Go to the SES console and verify sender/recipient email addresses.
@@ -95,21 +100,21 @@ Go to the SES console and verify sender/recipient email addresses.
 
 Ensure the SNS topic (sns_topic_arn) is correctly configured in backend/.env.
 
-7. Test the Application
+### 7. Test the Application
 
 Access the frontend URL (S3/CloudFront or Amplify Hosting).
 Sign up or log in via AWS Cognito.
 Test team creation, task management, and notifications.
 Check CloudWatch logs for TaskHandler and NotificationHandler for errors.
 
-Troubleshooting
+## Troubleshooting
 
 Deployment Errors: Verify Terraform outputs and AWS CLI credentials.
 Lambda Errors: Check CloudWatch logs for specific error messages.
 Frontend Errors: Ensure .env variables match Terraform outputs.
 Notifications: Confirm SES email verification and SNS topic setup.
 
-Related Documentation
+## Related Documentation
 
 Main README
 Backend README
