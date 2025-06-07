@@ -8,7 +8,6 @@ import Navbar from './components/Navbar';
 import Dashboard from './components/Dashboard';
 import LoadingSpinner from './components/LoadingSpinner';
 
-// Lazy load less frequently used components
 const TeamManagement = lazy(() => import('./components/TeamManagement'));
 const TaskList = lazy(() => import('./components/TaskList'));
 const TaskForm = lazy(() => import('./components/TaskForm'));
@@ -51,29 +50,20 @@ function AuthenticatedApp({ user, signOut }) {
     loadUser();
   }, [user]);
 
-  // FIXED: Enhanced user ID normalization that matches backend priority exactly
   function normalizeUserId(userData, fallbackUser) {
     console.log('App - Normalizing user ID with data:', { userData, fallbackUser });
     
-    // CRITICAL: Priority order MUST match backend normalizeUserId function exactly:
-    // 1. sub (most stable Cognito identifier) 
-    // 2. username
-    // 3. cognito:username  
-    // 4. email (from various sources)
-    // 5. custom:email
-    
     const possibleIds = [
-      userData?.sub,                              // Primary: Cognito sub (UUID) - most stable
-      userData?.username,                         // Secondary: Cognito username
-      userData?.['cognito:username'],             // Tertiary: Alternative username field
-      userData?.signInDetails?.loginId,           // Quaternary: Email from sign-in details
-      userData?.attributes?.email,                // Quaternary: Email from attributes  
-      fallbackUser?.sub,                          // Fallback options from original user object
+      userData?.userId,  // Corrected: Use userId from getCurrentUser (Cognito sub)
+      fallbackUser?.attributes?.sub,  // sub from Authenticator user
+      userData?.username,
+      userData?.['cognito:username'],
+      userData?.signInDetails?.loginId,
+      userData?.attributes?.email,
       fallbackUser?.username,
-      fallbackUser?.['cognito:username'],
       fallbackUser?.signInDetails?.loginId,
       fallbackUser?.attributes?.email
-    ];
+    ].filter(Boolean);
     
     for (let i = 0; i < possibleIds.length; i++) {
       const id = possibleIds[i];
@@ -94,47 +84,33 @@ function AuthenticatedApp({ user, signOut }) {
       
       console.log('App - Raw user from Authenticator:', user);
       
-      // Get enhanced user data from getCurrentUser
       const userData = await getCurrentUser();
       
       console.log('App - Enhanced user data from getCurrentUser:', userData);
       
-      // FIXED: Create a comprehensive user object with consistent field mapping
-      // The userId MUST match what the backend normalizeUserId function would return
       const normalizedUserId = normalizeUserId(userData, user);
       
       const enhancedUser = {
-        // CRITICAL: Primary identifier - must match backend normalization exactly
         userId: normalizedUserId,
-        
-        // Additional identifiers for compatibility and debugging
-        username: userData.username || userData.sub || user?.username || normalizedUserId,
-        sub: userData.sub || user?.sub,
-        
-        // Email handling with robust fallbacks
+        username: userData.username || userData.userId || user?.username || normalizedUserId,
+        sub: userData.userId || user?.sub,  // Use userId as sub
         email: userData.signInDetails?.loginId || 
                userData.attributes?.email || 
                user?.signInDetails?.loginId || 
                userData.username ||
                user?.username || 
                'unknown@example.com',
-        
-        // Display name derivation
         displayName: (userData.signInDetails?.loginId || 
                      userData.username || 
                      user?.username || 
                      'User').split('@')[0],
-        
-        // Additional attributes
         attributes: userData.attributes || {},
         signInDetails: userData.signInDetails || user?.signInDetails || {},
-        
-        // Debug information for troubleshooting
         _debug: {
           backendUserIdWouldBe: normalizedUserId,
           selectedFromPosition: 'see console logs',
           availableIds: {
-            sub: userData?.sub,
+            userId: userData?.userId,
             username: userData?.username,
             'cognito:username': userData?.['cognito:username'], 
             loginId: userData?.signInDetails?.loginId,
@@ -148,14 +124,12 @@ function AuthenticatedApp({ user, signOut }) {
       
       console.log('App - Final enhanced user object:', enhancedUser);
       console.log('App - User ID that will be sent to backend:', enhancedUser.userId);
-      console.log('App - This should match backend normalizeUserId output');
       
       setCurrentUser(enhancedUser);
       
     } catch (error) {
       console.error('App - Error loading user:', error);
       
-      // Create fallback user object from available data
       const normalizedUserId = normalizeUserId({}, user);
       
       const fallbackUser = {
@@ -214,7 +188,6 @@ function AuthenticatedApp({ user, signOut }) {
         <Suspense fallback={<LoadingSpinner message="Loading page..." />}>
           <Routes>
             <Route path="/" element={<Dashboard user={currentUser} />} />
-            {/* FIXED: Route parameter validation with enhanced error handling and team access validation */}
             <Route 
               path="/team/:teamId" 
               element={<TeamManagementWrapper user={currentUser} />} 
@@ -227,7 +200,6 @@ function AuthenticatedApp({ user, signOut }) {
               path="/create-task/:teamId" 
               element={<TaskFormWrapper user={currentUser} />} 
             />
-            {/* Catch-all route for invalid paths */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
@@ -236,7 +208,6 @@ function AuthenticatedApp({ user, signOut }) {
   );
 }
 
-// FIXED: Enhanced wrapper components with team access validation
 function TeamManagementWrapper({ user }) {
   const { teamId } = useParams();
   const [loading, setLoading] = useState(true);
@@ -248,7 +219,6 @@ function TeamManagementWrapper({ user }) {
   }, [teamId, user]);
 
   async function validateTeamAccess() {
-    // Enhanced route validation
     if (!teamId || teamId.trim() === '' || teamId === 'undefined' || teamId === 'null') {
       console.error('TeamManagementWrapper - Invalid teamId:', teamId);
       setError('Invalid team ID');
@@ -266,7 +236,6 @@ function TeamManagementWrapper({ user }) {
     try {
       console.log('TeamManagementWrapper - Validating access for user:', user.userId, 'to team:', teamId);
       
-      // FIXED: Use the new getTeam query to validate access
       const response = await client.graphql({
         query: getTeam,
         variables: { teamId },
@@ -341,7 +310,6 @@ function TaskListWrapper({ user }) {
   }, [teamId, user]);
 
   async function validateTeamAccess() {
-    // Enhanced route validation
     if (!teamId || teamId.trim() === '' || teamId === 'undefined' || teamId === 'null') {
       console.error('TaskListWrapper - Invalid teamId:', teamId);
       setError('Invalid team ID');
@@ -359,7 +327,6 @@ function TaskListWrapper({ user }) {
     try {
       console.log('TaskListWrapper - Validating access for user:', user.userId, 'to team:', teamId);
       
-      // FIXED: Use the new getTeam query to validate access
       const response = await client.graphql({
         query: getTeam,
         variables: { teamId },
@@ -435,7 +402,6 @@ function TaskFormWrapper({ user }) {
   }, [teamId, user]);
 
   async function validateTeamAccess() {
-    // Enhanced route validation
     if (!teamId || teamId.trim() === '' || teamId === 'undefined' || teamId === 'null') {
       console.error('TaskFormWrapper - Invalid teamId:', teamId);
       setError('Invalid team ID');
@@ -453,7 +419,6 @@ function TaskFormWrapper({ user }) {
     try {
       console.log('TaskFormWrapper - Validating access for user:', user.userId, 'to team:', teamId);
       
-      // FIXED: Use the new getTeam query to validate access and admin status
       const response = await client.graphql({
         query: getTeam,
         variables: { teamId },
@@ -466,7 +431,6 @@ function TaskFormWrapper({ user }) {
         setHasAccess(true);
         setIsAdmin(teamData.isAdmin || teamData.userRole === 'admin');
         
-        // Check if user is admin for task creation
         if (!teamData.isAdmin && teamData.userRole !== 'admin') {
           setError('Only team administrators can create tasks');
           return;
